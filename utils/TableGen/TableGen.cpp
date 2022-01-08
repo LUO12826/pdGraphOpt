@@ -57,6 +57,7 @@ enum ActionType {
   GenAutomata,
   GenDirectivesEnumDecl,
   GenDirectivesEnumImpl,
+  GenGraphOpt,
 };
 
 namespace llvm {
@@ -94,6 +95,8 @@ cl::opt<ActionType> Action(
         clEnumValN(GenAsmWriter, "gen-asm-writer", "Generate assembly writer"),
         clEnumValN(GenDisassembler, "gen-disassembler",
                    "Generate disassembler"),
+        clEnumValN(GenGraphOpt, "gen-graph-opt",
+                   "gen graph optimization code"),
         clEnumValN(GenPseudoLowering, "gen-pseudo-lowering",
                    "Generate pseudo instruction lowering"),
         clEnumValN(GenCompressInst, "gen-compress-inst-emitter",
@@ -147,6 +150,9 @@ cl::opt<std::string> Class("class", cl::desc("Print Enum list for this class"),
 
 bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
   switch (Action) {
+  case GenGraphOpt:
+    EmitGraphOptPass(Records, OS);
+    break;
   case PrintRecords:
     OS << Records;              // No argument, dump all contents
     break;
