@@ -7,6 +7,29 @@
 
 #ifndef TDVariable_h
 #define TDVariable_h
+namespace PdGraphOpt {
+
+class TDVariable {
+  std::string name;
+  std::string type;
+
+public:
+
+  TDVariable(std::string &name, std::string &type) {
+    this->name = name;
+    this->type = type;
+  }
+
+  std::string getType() {
+      return type;
+  }
+
+  std::string getName() {
+    return name;
+  }
+};
+
+}
 
 
 #endif /* TDVariable_h */
