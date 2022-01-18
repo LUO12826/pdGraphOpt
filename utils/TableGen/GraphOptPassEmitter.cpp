@@ -328,7 +328,6 @@ void GraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
   std::vector<PdGraphOpt::AttrToCopy>& attrsToCp = pat.getAttrsToCopy();
   for(auto &attr : attrsToCp) {
 
-    llvm::dbgs() << attr.fromKeyedOp << "  " << attr.toKeyedOp << "\n";
     std::string fromOpKeyed = opSelfKey2opKey.at(attr.fromKeyedOp);
     std::string toOpKeyed = opSelfKey2opKey.at(attr.toKeyedOp);
     os << llvm::formatv(

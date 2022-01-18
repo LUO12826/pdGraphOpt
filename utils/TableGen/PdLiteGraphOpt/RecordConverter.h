@@ -33,7 +33,7 @@ class RecordConverter {
     }
     auto opRecord = opInDag->getDef();
     auto op = OpCache.at(opRecord->getName().str());
-    llvm::dbgs() << opRecord->getName().str() << "  " << opRecord->getValueAsString("type") << "\n";
+
     std::vector<std::string> argNames;
     std::vector<std::unique_ptr<TDPatternNode>> argNodes;
     for(unsigned i = 0, count = dagInit->getNumArgs(); i < count; i++) {
@@ -141,8 +141,6 @@ public:
         attr.dataType = dagInitItem->getArg(1)->getAsUnquotedString();
         attr.fromKeyedOp = dagInitItem->getArg(2)->getAsUnquotedString();
         attr.toKeyedOp = dagInitItem->getArg(3)->getAsUnquotedString();
-        llvm::dbgs() << attr.stringDesc() << "\n";
-
         attrsToCopy.push_back(attr);
       }
 
@@ -157,8 +155,6 @@ public:
         attr.attrName = dagInitItem->getArg(0)->getAsUnquotedString();
         attr.dataType = dagInitItem->getArg(1)->getAsUnquotedString();
         attr.value = dagInitItem->getArg(2)->getAsUnquotedString();
-        llvm::dbgs() << attr.stringDesc() << "\n";
-
         attrsToSet.push_back(attr);
       }
 
