@@ -12,6 +12,34 @@
 
 namespace PdGraphOpt {
 
+
+struct AttrToSet {
+  std::string attrName;
+  std::string dataType;
+  std::string value;
+
+  std::string stringDesc() {
+    std::stringstream ss;
+    ss << "attrName:" << attrName << "(" << dataType << ") "
+       << "value:" << value;
+    return ss.str();
+  }
+};
+
+struct AttrToCopy {
+  std::string attrName;
+  std::string dataType;
+  std::string fromKeyedOp;
+  std::string toKeyedOp;
+
+  std::string stringDesc() {
+    std::stringstream ss;
+    ss << "attrName:" << attrName << "(" << dataType << ") "
+        << "from:" << fromKeyedOp << "  to:" << toKeyedOp;
+    return ss.str();
+  }
+};
+
 class TDPatternNode {
 public:
   enum NodeType {
@@ -74,6 +102,9 @@ class TDPattern {
   std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
   std::unique_ptr<TDPatternOpNode> targetPatternRoot;
 
+  std::vector<AttrToCopy> attrsToCopy;
+  std::vector<AttrToSet> attrsToSet;
+
   bool hasMultipleTargets{false};
   int benefitDelta{0};
 
@@ -87,6 +118,22 @@ public:
   std::string getStringRepresentation() {
     std::string rep = "pattern name: " + name + "\n";
     return rep;
+  }
+
+  void setAttrsToCopy(std::vector<AttrToCopy> &&attrs) {
+    this->attrsToCopy = std::move(attrs);
+  }
+
+  std::vector<AttrToCopy>& getAttrsToCopy() {
+    return this->attrsToCopy;
+  }
+
+  void setAttrsToSet(std::vector<AttrToSet> &&attrs) {
+    this->attrsToSet = std::move(attrs);
+  }
+
+  std::vector<AttrToSet>& getAttrsToSet() {
+    return this->attrsToSet;
   }
 
   std::string getName() {

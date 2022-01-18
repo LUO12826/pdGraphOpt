@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <memory>
+#include <sstream>
 #include "TDVariable.hpp"
 
 
@@ -18,8 +19,9 @@ namespace PdGraphOpt {
 class TDOperator {
   std::string key;
   std::string type;
-  std::string summary;
-  std::string description;
+  bool typeIsVariable{false};
+  std::string summary{""};
+  std::string description{""};
 
   std::vector<std::shared_ptr<TDVariable>> arguments;
   std::vector<std::string> argNames;
@@ -28,10 +30,18 @@ class TDOperator {
 
 public:
   explicit TDOperator(std::string &key, std::string &type): key(key), type(type) {
-
   }
+
   void setKey(std::string key) {
     this->key = key;
+  }
+
+  void setTypeIsVariable(bool yesOrNo) {
+    this->typeIsVariable = yesOrNo;
+  }
+
+  bool getTypeIsVariable() {
+    return this->typeIsVariable;
   }
 
   std::string getKey() {
@@ -42,9 +52,19 @@ public:
     return type;
   }
 
+  std::string getTypeWithQuote() {
+    return "\"" + type + "\"";
+  }
+
   std::vector<std::string>& getArgNames() {
       return argNames;
   };
+
+  int getIndexInArgNames(std::string arg) {
+      auto iter = std::find(argNames.begin(), argNames.end(), arg);
+      if(iter == argNames.end()) return -1;
+      return iter - argNames.begin();
+  }
 
   std::vector<std::string>& getResNames() {
     return resNames;
@@ -63,23 +83,23 @@ public:
   }
 
   std::string getStringRepresentation() {
-    std::string rep = "type:" + type + "\n";
-    rep += "key:" + key + "\n";
-    rep += "args: ";
+    std::stringstream rep;
+    rep << "type:" << type << "\n";
+    rep << "key:" << key << "\n";
+    rep << "args: ";
     for(unsigned i = 0, count = arguments.size(); i < count; i++) {
-      rep += argNames[i] + ":" + arguments[i]->getType() + ", ";
+      rep << argNames[i] << ":" << arguments[i]->getType() << ", ";
     }
-    rep += "\n";
-    rep += "res: ";
+    rep << "\n";
+    rep << "res: ";
     for(unsigned i = 0, count = results.size(); i < count; i++) {
-      rep += resNames[i] + ":" + results[i]->getType() + ", ";
+      rep << resNames[i] << ":" << results[i]->getType() << ", ";
     }
-    rep += "\n";
-    return rep;
+    rep << "\n";
+    return rep.str();
   }
 
 };
-
 }
 
 

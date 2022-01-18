@@ -13,6 +13,9 @@ class TDVariable {
   std::string name;
   std::string type;
 
+  bool isWeight{false};
+  bool isPersist{false};
+
 public:
 
   TDVariable(std::string &name, std::string &type) {
@@ -26,6 +29,14 @@ public:
 
   std::string getName() {
     return name;
+  }
+
+  void setIsWeight(bool yesOrNo) {
+    this->isWeight = yesOrNo;
+  }
+
+  void setIsPersist(bool yesOrNo) {
+    this->isPersist = yesOrNo;
   }
 };
 
