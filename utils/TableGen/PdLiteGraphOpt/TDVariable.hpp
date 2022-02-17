@@ -38,6 +38,14 @@ public:
   void setIsPersist(bool yesOrNo) {
     this->isPersist = yesOrNo;
   }
+
+  bool getIsWeight() {
+    return isWeight;
+  }
+
+  bool getIsPersist() {
+    return isPersist;
+  }
 };
 
 }

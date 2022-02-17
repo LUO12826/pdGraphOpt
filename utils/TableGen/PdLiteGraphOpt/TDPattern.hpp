@@ -9,26 +9,35 @@
 #define TDPattern_h
 
 #include <memory>
+#include <map>
 
 namespace PdGraphOpt {
 
-
-struct AttrToSet {
+struct AttrOperationRecordBase {
   std::string attrName;
   std::string dataType;
+
+  void setDataType(std::string dType) {
+    //全部用小写字母表示类型。
+    std::transform(dType.begin(), dType.end(), dType.begin(), ::tolower);
+    this->dataType = std::move(dType);
+  }
+};
+
+struct AttrToSet: AttrOperationRecordBase {
   std::string value;
+  std::string target;
 
   std::string stringDesc() {
     std::stringstream ss;
     ss << "attrName:" << attrName << "(" << dataType << ") "
-       << "value:" << value;
+       << "value:" << value << "set for:" << target;
     return ss.str();
   }
 };
 
-struct AttrToCopy {
-  std::string attrName;
-  std::string dataType;
+struct AttrToCopy: AttrOperationRecordBase {
+
   std::string fromKeyedOp;
   std::string toKeyedOp;
 
@@ -40,6 +49,24 @@ struct AttrToCopy {
   }
 };
 
+struct AttrToAssert: AttrOperationRecordBase {
+
+  std::string target;
+  std::string value;
+  std::string customAssert;
+  bool useCustomAssert{false};
+
+  std::string stringDesc() {
+    std::stringstream ss;
+    ss << "attrName:" << attrName << "(" << dataType << ") "
+       << "value:" << value << "  target:" << target;
+    return ss.str();
+  }
+};
+
+/**
+ * 内存中以树的形式存储td中描述的pattern，该类为树的结点类。
+ */
 class TDPatternNode {
 public:
   enum NodeType {
@@ -97,13 +124,22 @@ private:
   std::shared_ptr<TDVariable> var;
 };
 
+/**
+ * 用于表示td文件中描述的一个变换pattern
+ */
 class TDPattern {
+  //pattern的名字
   std::string name;
+  //指向源pattern。源pattern和目标pattern都以树的结构表示
   std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
+  //指向目标pattern。
   std::unique_ptr<TDPatternOpNode> targetPatternRoot;
 
   std::vector<AttrToCopy> attrsToCopy;
   std::vector<AttrToSet> attrsToSet;
+  std::map<std::string, std::vector<AttrToAssert>> attrsToAssert;
+
+  std::vector<std::string> conditionAttribute;
 
   bool hasMultipleTargets{false};
   int benefitDelta{0};
@@ -115,11 +151,6 @@ public:
             sourcePatternRoot(std::move(sourcePatternRoot)),
             targetPatternRoot(std::move(targetPatternRoot)) {}
 
-  std::string getStringRepresentation() {
-    std::string rep = "pattern name: " + name + "\n";
-    return rep;
-  }
-
   void setAttrsToCopy(std::vector<AttrToCopy> &&attrs) {
     this->attrsToCopy = std::move(attrs);
   }
@@ -128,12 +159,24 @@ public:
     return this->attrsToCopy;
   }
 
+  std::vector<std::string>& getConditionAttribute() {
+    return this->conditionAttribute;
+  }
+
   void setAttrsToSet(std::vector<AttrToSet> &&attrs) {
     this->attrsToSet = std::move(attrs);
   }
 
   std::vector<AttrToSet>& getAttrsToSet() {
     return this->attrsToSet;
+  }
+
+  void setAttrsToAssert(std::map<std::string, std::vector<AttrToAssert>> &&attrs) {
+    this->attrsToAssert = std::move(attrs);
+  }
+
+  std::map<std::string, std::vector<AttrToAssert>>& getAttrsToAssert() {
+    return this->attrsToAssert;
   }
 
   std::string getName() {
@@ -151,6 +194,11 @@ public:
 
   TDPatternOpNode* getTargetPatternRoot() {
     return targetPatternRoot.get();
+  }
+
+  std::string getStringRepresentation() {
+    std::string rep = "pattern name: " + name + "\n";
+    return rep;
   }
 };
 
