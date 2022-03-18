@@ -93,8 +93,8 @@ void EmitExegesis(RecordKeeper &RK, raw_ostream &OS);
 void EmitAutomata(RecordKeeper &RK, raw_ostream &OS);
 void EmitDirectivesDecl(RecordKeeper &RK, raw_ostream &OS);
 void EmitDirectivesImpl(RecordKeeper &RK, raw_ostream &OS);
-void EmitGraphOptPass(RecordKeeper &RK, raw_ostream &OS);
-
+void EmitPaddleGraphOptPass(RecordKeeper &RK, raw_ostream &OS);
+void EmitPaddleLiteGraphOptPass(RecordKeeper &RK, raw_ostream &OS);
 } // End llvm namespace
 
 #endif

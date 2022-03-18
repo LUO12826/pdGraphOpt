@@ -48,6 +48,10 @@ public:
     return key;
   }
 
+  std::string getTypeAuto() {
+      return typeIsVariable ? type : "\"" + type + "\"";
+  }
+
   std::string getType() {
     return type;
   }

@@ -53,7 +53,19 @@ class RecordConverter {
       }
     }
 
-    return new TDPatternOpNode(op, std::move(argNodes), std::move(argNames));
+    return new TDPatternOpNode(op, std::move(argNodes),
+                               std::move(argNames));
+  }
+
+  std::vector<std::string> getStringList(llvm::Record *rec,
+                                         llvm::StringRef field) {
+    std::vector<std::string> list;
+    const auto& originalList
+        = rec->getValueAsListOfStrings(field);
+    for (auto &s : originalList) {
+      list.push_back(s.str());
+    }
+    return list;
   }
 
 public:
@@ -120,9 +132,10 @@ public:
       patterns.emplace_back(rec->getName().str(),
                             std::unique_ptr<TDPatternOpNode>(sourcePat),
                             std::unique_ptr<TDPatternOpNode>(targetPat));
+      TDPattern &newPat = patterns.back();
 
+      newPat.kernelName = rec->getValueAsString("kernelName").str();
       // read `attrToCopy`
-      std::vector<AttrToCopy> attrsToCopy;
       auto *attrsToCpList = rec->getValueAsListInit("attrToCopy");
       for (unsigned i = 0, c = attrsToCpList->size(); i < c; i++) {
         auto *dagInitItem =
@@ -134,14 +147,23 @@ public:
         AttrToCopy attr;
         attr.attrName = dagInitItem->getArg(0)->getAsUnquotedString();
         attr.setDataType(dagInitItem->getArg(1)->getAsUnquotedString());
-        attr.fromKeyedOp = dagInitItem->getArg(2)->getAsUnquotedString();
-        attr.toKeyedOp = dagInitItem->getArg(3)->getAsUnquotedString();
-        attrsToCopy.push_back(std::move(attr));
+        attr.from = dagInitItem->getArg(2)->getAsUnquotedString();
+        attr.to = dagInitItem->getArg(3)->getAsUnquotedString();
+
+
+        if(!attr.checkIntegrity()) {
+
+        }
+
+        if(attr.attrName.at(0) == '#') {
+          if(attr.attrName == "#INPUT_SCALE") {
+            newPat.needCopyInputScale = true;
+          }
+        }
+        newPat.attrsToCopy.push_back(std::move(attr));
       }
-      patterns.back().setAttrsToCopy(std::move(attrsToCopy));
 
       // read `attrToSet`
-      std::vector<AttrToSet> attrsToSet;
       auto *attrsToSetList = rec->getValueAsListInit("attrToSet");
       for (unsigned i = 0, c = attrsToSetList->size(); i < c; i++) {
         auto *dagInitItem =
@@ -156,12 +178,10 @@ public:
         attr.attrName = dagInitItem->getArg(1)->getAsUnquotedString();
         attr.setDataType(dagInitItem->getArg(2)->getAsUnquotedString());
         attr.value = dagInitItem->getArg(3)->getAsUnquotedString();
-        attrsToSet.push_back(std::move(attr));
+        newPat.attrsToSet[attr.target].push_back(std::move(attr));
       }
-      patterns.back().setAttrsToSet(std::move(attrsToSet));
 
       //read `attrToAssert`
-      std::map<std::string, std::vector<AttrToAssert>> attrsToAssert;
       auto *attrsToAssertList = rec->getValueAsListInit("attrToAssert");
       for (unsigned i = 0, c = attrsToAssertList->size(); i < c; i++) {
         auto *dagInitItem =
@@ -184,15 +204,33 @@ public:
           attr.customAssert = dagInitItem->getArg(3)->getAsUnquotedString();
         }
 
-        attrsToAssert[attr.target].push_back(std::move(attr));
+        newPat.attrsToAssert[attr.target].push_back(std::move(attr));
       }
-      patterns.back().setAttrsToAssert(std::move(attrsToAssert));
+
+      //read `CustomTeller`
+      auto *tellersList = rec->getValueAsListInit("customTeller");
+      for (unsigned i = 0, c = tellersList->size(); i < c; i++) {
+        auto *dagInitItem =
+            llvm::dyn_cast<llvm::DagInit>(tellersList->getElement(i));
+
+        if (!dagInitItem) {
+          llvm::PrintFatalError(
+              "Every item in attrToAssert list must be a dag.");
+        }
+        CustomTeller teller;
+
+        teller.target = dagInitItem->getArg(0)->getAsUnquotedString();
+        teller.teller = (dagInitItem->getArg(1)->getAsUnquotedString());
+
+        newPat.customTellers[teller.target].push_back(std::move(teller));
+      }
 
       //read `conditionAttr`
-      auto conditionAttrList = rec->getValueAsListOfStrings("conditionAttribute");
-      for (auto &s : conditionAttrList) {
-        patterns.back().getConditionAttribute().push_back(s.str());
-      }
+      newPat.conditionAttributes = getStringList(rec, "conditionAttribute");
+      //read `bindTargets`
+      newPat.bindTargets = getStringList(rec, "bindTargets");
+      //read `excludeTargets`
+      newPat.excludeTargets = getStringList(rec, "excludeTargets");
 
     } //end build Pattern
   }

@@ -20,36 +20,42 @@
 #include <string>
 #include <vector>
 
-#define DEBUG_TYPE "graph-opt-pass-emitter"
+#define DEBUG_TYPE "pd-graph-opt-pass-emitter"
 
 using namespace llvm;
 
 namespace {
 
 //目前主要生成Fuser中的三个方法。
-class GraphOptPassEmitter {
+class PdGraphOptPassEmitter {
 
 private:
   RecordKeeper &Records;
 
-  //存储特定类型op的数量。用于在给op分配key时生成唯一字符串。
+  //把op按类型计数。用于在给op分配key时生成唯一字符串。
   std::map<std::string, unsigned> opKeyAllocationRecord;
 
-  //存储特定类型op的数量。
+  //把var按类型计数。
   std::map<std::string, unsigned> varKeyAllocationRecord;
 
   // op到它被分配的key间的映射。
-  std::map<PdGraphOpt::TDOperator *, std::string> op2key;
+  std::map<PdGraphOpt::TDPatternOpNode *, std::string> op2key;
+
+  // op到它被分配的key间的映射。
+  std::map<std::string, PdGraphOpt::TDPatternOpNode *> key2op;
 
   //用户给op设定的key（如果有的话）到op被分配的key间的映射。
   std::map<std::string, std::string> opDesignatedKey2opKey;
 
+  // var的key到其所属的op的映射。
+  std::map<std::string, std::string> varKeyToSrcPatOpKey;
+
   std::string srcPatOutputKey{"Out"};
 
   /// Pattern（有向图）的首个节点，融合时会作为替换点位
-  PdGraphOpt::TDPatternOpNode *leadingOp{nullptr};
+  PdGraphOpt::TDPatternOpNode *leadingOpNode{nullptr};
 
-  void EmitFuserHeader(Record *, raw_ostream &);
+  void EmitFuserHeader(PdGraphOpt::TDPattern &pat, raw_ostream &os);
 
   // void EmitFuserImpl(Record*, raw_ostream&);
 
@@ -66,14 +72,16 @@ private:
   std::string dfsPatDag(PdGraphOpt::TDPatternOpNode *dag, raw_ostream &os,
                         PdGraphOpt::TDPattern &pat);
 
-  std::string registerOp(PdGraphOpt::TDOperator *op) {
-    if (op2key.count(op)) {
+  std::string registerOp(PdGraphOpt::TDPatternOpNode *opNode) {
+    if (op2key.count(opNode)) {
       llvm::PrintFatalError("Do not register a op twice.");
     } else {
-      std::string key = getNewOpKey(op->getType());
-      op2key.insert(std::make_pair(op, key));
-      if (op->getKey() != "") {
-        opDesignatedKey2opKey.insert(std::make_pair(op->getKey(), key));
+      std::string key = getNewOpKey(opNode->getOp()->getType());
+      op2key.insert(std::make_pair(opNode, key));
+      key2op.insert(std::make_pair(key, opNode));
+      if (opNode->getOp()->getKey() != "") {
+        opDesignatedKey2opKey.insert(
+            std::make_pair(opNode->getOp()->getKey(), key));
       }
       return key;
     }
@@ -81,13 +89,29 @@ private:
 
   std::string getNewOpKey(std::string opType) {
     if (opKeyAllocationRecord.count(opType)) {
-      unsigned count = opKeyAllocationRecord.at(opType) + 1;
-      opKeyAllocationRecord.at(opType)++;
-      return opType + "_" + std::to_string(count);
+      opKeyAllocationRecord[opType]++;
+      return opType + "_" + std::to_string(opKeyAllocationRecord[opType]);
     } else {
-      opKeyAllocationRecord.insert(std::make_pair(opType, 0));
+      opKeyAllocationRecord[opType] = 0;
       return opType + "_" + std::to_string(0);
     }
+  }
+
+  std::string genListString(std::vector<std::string> &list,
+                            std::string separator, std::string head,
+                            std::string tail) {
+    std::stringstream ss;
+    ss << head << " ";
+    bool first = true;
+    for (std::string &item : list) {
+      if (first) {
+        ss << item;
+        first = false;
+      } else
+        ss << separator << " " << item;
+    }
+    ss << " " << tail;
+    return ss.str();
   }
 
   void resetState() {
@@ -99,7 +123,7 @@ private:
   }
 
 public:
-  GraphOptPassEmitter(RecordKeeper &RK) : Records(RK) {}
+  PdGraphOptPassEmitter(RecordKeeper &RK) : Records(RK) {}
 
   void run(raw_ostream &OS);
 };
@@ -107,15 +131,16 @@ public:
 } // anonymous namespace
 
 //遍历sourcePattern，生成定义VarNode、OpNode及其定义它们拓扑关系的代码
-std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
+//在EmitBuildPatternMethod中被调用
+std::string
+PdGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
                                            raw_ostream &os,
                                            PdGraphOpt::TDPattern &pat) {
 
   auto op = dag->getOp();
-  std::string opType =
-      op->getTypeIsVariable() ? op->getType() : op->getTypeWithQuote();
+  std::string opType = op->getTypeAuto();
 
-  std::string opKey = registerOp(op.get());
+  std::string opKey = registerOp(dag);
 
   //生成该dag的op对应的OpNode
   os << "  //Start op " << opKey << "\n";
@@ -124,27 +149,34 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   os << "\n";
   os << "  " << opKey << "->AsIntermediate();\n";
 
+  //为这个OpNode添加断言
   if (pat.getAttrsToAssert().count(op->getKey())) {
-    std::vector<PdGraphOpt::AttrToAssert> &attrs =
-        pat.getAttrsToAssert()[op->getKey()];
+    const std::vector<PdGraphOpt::AttrToAssert> &attrs =
+        pat.getAttrsToAssert().at(op->getKey());
     for (auto &&attr : attrs) {
-      if(attr.useCustomAssert) {
+      if (attr.useCustomAssert) {
         os << llvm::formatv(
             "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", {3});\n", opKey,
-                            attr.dataType, attr.attrName, attr.customAssert);
-      }
-      else if (attr.dataType == "float" || attr.dataType == "double") {
-        os << llvm::formatv("  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", "
+            attr.dataType, attr.attrName, attr.customAssert);
+      } else if (attr.dataType == "float" || attr.dataType == "double") {
+        os << llvm::formatv(
+            "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", "
             "[]({3} attr) { return (std::fabs(attr - {4}) < 1e-5); });\n",
-                            opKey, attr.dataType, attr.attrName, attr.dataType, attr.value);
+            opKey, attr.dataType, attr.attrName, attr.dataType, attr.value);
+      } else {
+        os << llvm::formatv(
+            "  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey, attr.dataType,
+            attr.attrName,
+            attr.dataType != "string" ? attr.value : "\"" + attr.value + "\"");
       }
-      else {
-        os << llvm::formatv("  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey,
-                            attr.dataType, attr.attrName,
-                            attr.dataType != "string" ? attr.value
-                                                      : "\"" + attr.value + "\"");
-      }
-
+    }
+  }
+  if (pat.getCustomTellers().count(op->getKey())) {
+    const std::vector<PdGraphOpt::CustomTeller> &tellers =
+        pat.getCustomTellers().at(op->getKey());
+    for (auto &&tel : tellers) {
+      os << llvm::formatv("  {0}->assert_node_satisfied({1});\n", opKey,
+                          tel.teller);
     }
   }
 
@@ -160,7 +192,7 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
     }
   }
   if (patWithoutDag) {
-    this->leadingOp = dag;
+    this->leadingOpNode = dag;
   }
 
   //这个op的参数名称列表，参数名用来作为VarNode的变量名。
@@ -170,16 +202,18 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   //这个op在pattern中的参数名称列表
   auto &argNames = dag->getArgNames();
 
+  //处理一个OpNode的参数，生成对应的VarNode
   for (unsigned i = 0, c = args.size(); i < c; i++) {
     //如果这个dag的参数是个Var，生成一个VarNode
     if (args[i]->getNodeType() == PdGraphOpt::TDPatternNode::NodeType::Var) {
-      //这个Var的名称（在dag中指定的），作为生成VarNode时的变量名
-      std::string argName = argNames[i];
-      inputs.push_back(argName);
+      //这个Var的名称（或者说是key，dag中指定的），作为生成VarNode时的变量名
+      std::string argKey = argNames[i];
+      inputs.push_back(argKey);
+      varKeyToSrcPatOpKey[argKey] = opKey;
       os << llvm::formatv(
           "  auto* {0} = VarNode(\"{1}\")->assert_is_op_input({2}, "
           "\"{3}\")",
-          argName, argName, opType, opArgNames[i]);
+          argKey, argKey, opType, opArgNames[i]);
 
       auto varArgPtr =
           static_cast<PdGraphOpt::TDPatternVarNode *>(args[i].get());
@@ -195,9 +229,7 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
 
       auto opArgPtr = static_cast<PdGraphOpt::TDPatternOpNode *>(args[i].get());
       std::string innerOpKey = dfsPatDag(opArgPtr, os, pat);
-      std::string innerOpType = opArgPtr->getOp()->getTypeIsVariable()
-                                    ? opArgPtr->getOp()->getType()
-                                    : opArgPtr->getOp()->getTypeWithQuote();
+      std::string innerOpType = opArgPtr->getOp()->getTypeAuto();
 
       std::vector<std::string> outputs;
       auto &innerOpResNames = opArgPtr->getOp()->getResNames();
@@ -206,26 +238,18 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
         outputs.push_back(innerOpOutKey);
         os << llvm::formatv(
             "  auto* {0} = "
-            "VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");",
+            "VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
             innerOpOutKey, innerOpOutKey, innerOpType, innerOpResNames[j]);
-        os << "\n";
-        os << "  " << innerOpOutKey << "->AsIntermediate();";
-        os << "\n";
+        os << "  " << innerOpOutKey << "->AsIntermediate();\n";
+
         if (j == 0)
           inputs.push_back(innerOpOutKey);
       }
 
       std::string opOutputSet = innerOpKey + "_outputs";
-      os << "  std::vector<PMNode*> " << opOutputSet << " {";
-      bool first = true;
-      for (std::string &output : outputs) {
-        if (first) {
-          os << output;
-          first = false;
-        } else
-          os << ", " << output;
-      }
-      os << "};\n";
+      os << "  std::vector<PMNode*> " << opOutputSet;
+      os << genListString(outputs, ",", "{", "}");
+      os << ";\n";
 
       //连接op的输入和输出。
       os << llvm::formatv("  {0}_inputs >> *{1} >> {2};", innerOpKey,
@@ -236,74 +260,65 @@ std::string GraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
 
   //生成该op的input集合
   std::string opInputSet = opKey + "_inputs";
-  os << "  std::vector<PMNode*> " << opInputSet << " {";
-  bool first = true;
-  for (std::string &input : inputs) {
-    if (first) {
-      os << input;
-      first = false;
-    } else
-      os << ", " << input;
-  }
-  os << "};\n";
+  os << "  std::vector<PMNode*> " << opInputSet;
+  os << genListString(inputs, ",", "{", "}");
+  os << ";\n";
   os << "  //End op " << opKey << "\n";
   return opKey;
 }
 
 //生成源码中`GenOpDesc`这个方法。
-void GraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
+void PdGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
                                               raw_ostream &os) {
-  assert(leadingOp != nullptr && "leadingOp not found.");
-
-  auto patLeadingOp = leadingOp->getOp();
+  assert(leadingOpNode != nullptr && "leadingOpNode not found.");
 
   os << "cpp::OpDesc " << pat.getNameWithoutPat()
      << "Fuser::GenOpDesc(const key2nodes_t& matched) {\n";
 
-  std::string patHeadOpKey = op2key.at(patLeadingOp.get());
+  std::string patHeadOpKey = op2key.at(leadingOpNode);
   os << llvm::formatv(
       "  auto op_desc = *matched.at(\"{0}\")->stmt()->op_info();\n",
       patHeadOpKey);
 
-  auto patHeadOpArgNames = patLeadingOp->getArgNames();
-  /*
-  for (auto &arg : patHeadOpArgNames) {
-    os << llvm::formatv(
-        "  auto input_{0}_name = op_desc.Input(\"{1}\").front();\n", arg, arg);
-    os << llvm::formatv("  std::vector<float> {0}_scale_vct;\n", arg);
-  }
+  //开始处理SetInputScale的部分。
+  //由于SetInputScale的代码有分开的两部分，这里先把后面那部分一并生成。
+  std::stringstream SetInputScaleStr;
+  SetInputScaleStr << "  if (is_quantized_op) {\n";
+  std::stringstream GetInputScaleStr;
+  GetInputScaleStr << "  if (is_quantized_op) {\n";
 
-  if (patHeadOpArgNames.size() == 1) {
-    os << llvm::formatv(
-        "  bool is_quantized_op = op_desc.HasInputScale(input_{0}_name);\n",
-        patHeadOpArgNames.front());
-  } else {
-    for (size_t i = 0, argCount = patHeadOpArgNames.size(); i < argCount - 1;
-         i++) {
-      std::string argName = patHeadOpArgNames[i];
-      if (i == 0) {
-        os << llvm::formatv("  bool is_quantized_op = "
-                            "op_desc.HasInputScale(input_{0}_name) &&\n",
-                            argName);
-      } else {
-        os << llvm::formatv("                         "
-                            "op_desc.HasInputScale(input_{0}_name) &&\n",
-                            argName);
-      }
+  if (pat.getNeedCopyInputScale()) {
+    os << "  bool is_quantized_op = true;\n";
+    for (auto &&attr : pat.getAttrsToCopy()) {
+      if (attr.attrName != "#INPUT_SCALE")
+        continue;
+
+      auto op = key2op[varKeyToSrcPatOpKey[attr.from]];
+      std::string formArgName = op->getFormArgNameByActualArgName(attr.from);
+      os << llvm::formatv(
+          "  auto input_{0}_name = op_desc.Input(\"{1}\").front();\n",
+          attr.from, formArgName);
+      os << llvm::formatv("  std::vector<float> {0}_scale_vct;\n", attr.from);
+
+      os << llvm::formatv(
+          "  is_quantized_op &= op_desc.HasInputScale(input_{0}_name);\n",
+          attr.from);
+
+      GetInputScaleStr << llvm::formatv(
+                 "    {0}_scale_vct = op_desc.GetInputScale(input_{1}_name);\n",
+                 attr.from, attr.from).str();
+
+      SetInputScaleStr << llvm::formatv(
+                 "    op_desc.SetInputScale(matched.at(\"{0}\")->arg()->name, "
+                 "{1}_scale_vct);\n",
+                 attr.from, attr.from).str();
     }
-    os << llvm::formatv(
-        "                         op_desc.HasInputScale(input_{0}_name);\n",
-        patHeadOpArgNames.back());
-  }
+    SetInputScaleStr << "  }\n";
+    GetInputScaleStr << "  }\n";
 
-  os << "  if (is_quantized_op) {\n";
-  for (auto &argName : patHeadOpArgNames) {
-    os << llvm::formatv(
-        "    {0}_scale_vct = op_desc.GetInputScale(input_{1}_name);\n", argName,
-        argName);
-  }
-  os << "  }\n";
-  */
+    os << GetInputScaleStr.str();
+  } //结束处理SetInputScale的部分。
+
   os << "  op_desc.mutable_inputs()->clear();\n";
   os << "  op_desc.mutable_outputs()->clear();\n";
 
@@ -334,8 +349,9 @@ void GraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
 
   // handle AttrToSet
   //这里并没有考虑AttrToSet指定的target，目前认为target就是融合后的那个结点
-  std::vector<PdGraphOpt::AttrToSet> &attrsToSet = pat.getAttrsToSet();
-  for (auto &attr : attrsToSet) {
+  const std::map<std::string, std::vector<PdGraphOpt::AttrToSet>> &attrsToSet =
+      pat.getAttrsToSet();
+  for (auto &attr : attrsToSet.at(targetPatOp->getKey())) {
     if (attr.dataType == "string") {
       os << llvm::formatv("  op_desc.SetAttr(\"{0}\", \"{1}\");\n",
                           attr.attrName, attr.value);
@@ -346,46 +362,37 @@ void GraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
   }
 
   // handle AttrToCopy
-  std::vector<PdGraphOpt::AttrToCopy> &attrsToCp = pat.getAttrsToCopy();
+  auto &attrsToCp = pat.getAttrsToCopy();
   for (auto &attr : attrsToCp) {
-
-    std::string fromOpKeyed = opDesignatedKey2opKey.at(attr.fromKeyedOp);
-    std::string toOpKeyed = opDesignatedKey2opKey.at(attr.toKeyedOp);
+    if (attr.attrName.at(0) == '#')
+      continue;
+    std::string fromOpKeyed = opDesignatedKey2opKey.at(attr.from);
+    std::string toOpKeyed = opDesignatedKey2opKey.at(attr.to);
     os << llvm::formatv(
         "  op_desc.SetAttr(\"{0}\", "
         "matched.at(\"{1}\")->stmt()->op_info()->GetAttr<{2}>(\"{3}\"));\n",
         attr.attrName, fromOpKeyed, attr.dataType, attr.attrName);
   }
 
-  /*
-    os << "  if (is_quantized_op) {\n";
-
-    unsigned resOpArgIndex = 0;
-    for (auto &argName : leadingOp->getArgNames()) {
-      os << llvm::formatv(
-          "    op_desc.SetInputScale(matched.at(\"{0}\")->arg()->name, "
-          "{1}_scale_vct);\n",
-          argName, patHeadOpArgNames[resOpArgIndex++]);
-    }
-    os << "  }\n";
-    */
+  if (pat.getNeedCopyInputScale()) {
+    os << SetInputScaleStr.str();
+  }
 
   os << "  return op_desc;\n";
   os << "}\n";
 }
 
 //生成源码中`InsertNewNode`这个方法。
-void GraphOptPassEmitter::EmitInsertNewNodeMethod(PdGraphOpt::TDPattern &pat,
+void PdGraphOptPassEmitter::EmitInsertNewNodeMethod(PdGraphOpt::TDPattern &pat,
                                                   raw_ostream &os) {
-  assert(leadingOp != nullptr && "leadingOp not found.");
+  assert(leadingOpNode != nullptr && "leadingOpNode not found.");
 
-  std::string leadingOpType = leadingOp->getOp()->getType();
-  std::string leadingOpKey = op2key.at(leadingOp->getOp().get());
+  std::string leadingOpType = leadingOpNode->getOp()->getType();
+  std::string leadingOpKey = op2key.at(leadingOpNode);
 
   auto targetPat = pat.getTargetPatternRoot();
-  auto targetPatOp = targetPat->getOp();
-  std::string targetPatOpType = targetPatOp->getType();
-  std::string targetPatOpKey = registerOp(targetPatOp.get());
+  std::string targetPatOpType = targetPat->getOp()->getType();
+  std::string targetPatOpKey = registerOp(targetPat);
 
   os << "void " << pat.getNameWithoutPat()
      << "Fuser::InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) {\n";
@@ -418,8 +425,8 @@ void GraphOptPassEmitter::EmitInsertNewNodeMethod(PdGraphOpt::TDPattern &pat,
   os << "}\n";
 }
 
-//生成源码中`BuildPattern`这个方法。
-void GraphOptPassEmitter::EmitBuildPatternMethod(PdGraphOpt::TDPattern &pat,
+//生成源码中`BuildPattern`这个方法。这个方法是生成代码时最先被调用的。
+void PdGraphOptPassEmitter::EmitBuildPatternMethod(PdGraphOpt::TDPattern &pat,
                                                  raw_ostream &os) {
   os << "//---------------" << pat.getName() << "---------------\n";
   auto *srcPatRoot = pat.getSourcePatternRoot();
@@ -428,9 +435,7 @@ void GraphOptPassEmitter::EmitBuildPatternMethod(PdGraphOpt::TDPattern &pat,
 
   std::string innerOpKey = dfsPatDag(srcPatRoot, os, pat);
   this->srcPatOutputKey = srcPatRoot->getOp()->getResNames()[0];
-  std::string innerOpType = srcPatRoot->getOp()->getTypeIsVariable()
-                                ? srcPatRoot->getOp()->getType()
-                                : srcPatRoot->getOp()->getTypeWithQuote();
+  std::string innerOpType = srcPatRoot->getOp()->getTypeAuto();
   os << llvm::formatv(
       "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
       srcPatOutputKey, srcPatOutputKey, innerOpType, srcPatOutputKey);
@@ -441,9 +446,10 @@ void GraphOptPassEmitter::EmitBuildPatternMethod(PdGraphOpt::TDPattern &pat,
   os << "}\n";
 }
 
-void GraphOptPassEmitter::EmitFuserHeader(Record *record, raw_ostream &os) {
+void PdGraphOptPassEmitter::EmitFuserHeader(PdGraphOpt::TDPattern &pat,
+                                          raw_ostream &os) {
 
-  StringRef className = "someFuser";
+
 
   os << R"(// Copyright (c) 2019 PaddlePaddle Authors. All Rights Reserved.
 //
@@ -465,8 +471,8 @@ void GraphOptPassEmitter::EmitFuserHeader(Record *record, raw_ostream &os) {
   os << "\n\n";
 
   os << R"(#include <memory>
-#include "lite/core/optimizer/mir/pattern_matcher_high_api.h"
 #include <string>
+#include "lite/core/optimizer/mir/pattern_matcher_high_api.h"
 )";
   os << "\n";
   os << R"(namespace paddle {
@@ -475,20 +481,18 @@ namespace mir {
 namespace fusion {
 )";
 
+  std::string patName = pat.getNameWithoutPat();
   os << "\n";
-  os << "class " << className << " : public FuseBase {\n";
+  os << "class " << patName << "Fuser" << " : public FuseBase {\n";
   os << "public:\n";
-  os << "  explicit FcFuser(bool with_relu) : with_relu_(with_relu) {}\n";
   os << "  void BuildPattern() override;\n";
   os << "  void InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) "
         "override;\n";
   os << "private:\n";
   os << "  cpp::OpDesc GenOpDesc(const key2nodes_t& matched) override;\n";
-  os << "  bool with_relu_;\n";
   os << "};\n";
 
   os << "\n";
-
   os << R"(}  // namespace fusion
 }  // namespace mir
 }  // namespace lite
@@ -496,15 +500,13 @@ namespace fusion {
 )";
 }
 
-void GraphOptPassEmitter::run(raw_ostream &OS) {
-
-  auto recs = Records.getAllDerivedDefinitions("Pat");
+void PdGraphOptPassEmitter::run(raw_ostream &OS) {
 
   PdGraphOpt::RecordConverter converter(Records);
   std::vector<PdGraphOpt::TDPattern> patterns = converter.getPatterns();
 
   for (PdGraphOpt::TDPattern &pat : patterns) {
-
+    EmitFuserHeader(pat, OS);
     EmitBuildPatternMethod(pat, OS);
     EmitInsertNewNodeMethod(pat, OS);
     EmitGenOpDescMethod(pat, OS);
@@ -515,8 +517,8 @@ void GraphOptPassEmitter::run(raw_ostream &OS) {
 
 namespace llvm {
 
-void EmitGraphOptPass(RecordKeeper &RK, raw_ostream &OS) {
-  GraphOptPassEmitter(RK).run(OS);
+void EmitPaddleGraphOptPass(RecordKeeper &RK, raw_ostream &OS) {
+  PdGraphOptPassEmitter(RK).run(OS);
 }
 
 } // namespace llvm

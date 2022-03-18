@@ -56,7 +56,8 @@ add_tablegen(llvm-tblgen LLVM
   X86RecognizableInstr.cpp
   WebAssemblyDisassemblerEmitter.cpp
   CTagsEmitter.cpp
-  GraphOptPassEmitter.cpp
+  PdLiteGraphOptPassEmitter.cpp
+  PdGraphOptPassEmitter.cpp
   )
 target_link_libraries(llvm-tblgen PRIVATE LLVMTableGenGlobalISel)
 set_target_properties(llvm-tblgen PROPERTIES FOLDER "Tablegenning")
