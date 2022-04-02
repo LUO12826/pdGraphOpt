@@ -11,8 +11,7 @@
 #include <vector>
 #include <memory>
 #include <sstream>
-#include "TDVariable.hpp"
-
+#include "TDOpArgument.h"
 
 namespace PdGraphOpt {
 
@@ -23,7 +22,7 @@ class TDOperator {
   std::string summary{""};
   std::string description{""};
 
-  std::vector<std::shared_ptr<TDVariable>> arguments;
+  std::vector<std::shared_ptr<TDOpArgument>> arguments;
   std::vector<std::string> argNames;
   std::vector<std::shared_ptr<TDVariable>> results;
   std::vector<std::string> resNames;
@@ -64,6 +63,28 @@ public:
       return argNames;
   };
 
+  TDOpArgument::ArgumentType getArgumentTypeAtIndex(unsigned index) {
+    return arguments[index]->getArgumentType();
+  }
+
+  const auto& getArguments(){
+    return arguments;
+  }
+
+  std::shared_ptr<TDVariable> getArgumentAsVarAtIndex(unsigned index) {
+    assert(
+        arguments[index]->getArgumentType() == TDOpArgument::variable
+           && "try to get an argument from TDOperator as variable but get attribute");
+    return std::static_pointer_cast<TDVariable>(arguments[index]);
+  }
+
+  std::shared_ptr<TDAttribute> getArgumentAsAttrAtIndex(unsigned index) {
+    assert(
+        arguments[index]->getArgumentType() == TDOpArgument::attribute
+           && "try to get an argument from TDOperator as attribute but get variable");
+    return std::static_pointer_cast<TDAttribute>(arguments[index]);
+  }
+
   int getIndexInArgNames(std::string arg) {
       auto iter = std::find(argNames.begin(), argNames.end(), arg);
       if(iter == argNames.end()) return -1;
@@ -74,7 +95,7 @@ public:
     return resNames;
   };
 
-  void setArguments(std::vector<std::shared_ptr<TDVariable>> &args,
+  void setArguments(std::vector<std::shared_ptr<TDOpArgument>> &args,
                     std::vector<std::string> &argNames) {
     this->arguments = args;
     this->argNames = argNames;
@@ -88,13 +109,25 @@ public:
 
   std::string getStringRepresentation() {
     std::stringstream rep;
+    std::stringstream attrs;
     rep << "type:" << type << "\n";
     rep << "key:" << key << "\n";
     rep << "args: ";
     for(unsigned i = 0, count = arguments.size(); i < count; i++) {
-      rep << argNames[i] << ":" << arguments[i]->getType() << ", ";
+      if (arguments[i]->getArgumentType() == TDOpArgument::variable) {
+        rep << argNames[i] << ":"
+            << std::static_pointer_cast<TDVariable>(arguments[i])->getType()
+            << ", ";
+      }
+      else {
+        attrs << argNames[i] << ":"
+            << std::static_pointer_cast<TDAttribute>(arguments[i])->getType()
+            << ", ";
+      }
+
     }
     rep << "\n";
+    rep << "attrs: " << attrs.str() << "\n";
     rep << "res: ";
     for(unsigned i = 0, count = results.size(); i < count; i++) {
       rep << resNames[i] << ":" << results[i]->getType() << ", ";

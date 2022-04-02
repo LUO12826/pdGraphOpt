@@ -294,7 +294,7 @@ void PdGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
         continue;
 
       auto op = key2op[varKeyToSrcPatOpKey[attr.from]];
-      std::string formArgName = op->getFormArgNameByActualArgName(attr.from);
+      std::string formArgName = op->getArgSlotNameByActualArgName(attr.from);
       os << llvm::formatv(
           "  auto input_{0}_name = op_desc.Input(\"{1}\").front();\n",
           attr.from, formArgName);

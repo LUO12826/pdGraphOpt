@@ -9,8 +9,10 @@
 #define TDPattern_h
 
 #include "llvm/TableGen/Error.h"
+#include "TDOpArgument.h"
 #include <map>
 #include <memory>
+
 
 namespace PdGraphOpt {
 
@@ -101,7 +103,7 @@ struct CustomTeller {
  */
 class TDPatternNode {
 public:
-  enum NodeType { Op, Var };
+  enum NodeType { Op, Var, Attr };
 
   virtual ~TDPatternNode() {}
   virtual NodeType getNodeType() = 0;
@@ -110,9 +112,11 @@ public:
 class TDPatternOpNode : public TDPatternNode {
 public:
   TDPatternOpNode(std::shared_ptr<TDOperator> &op,
+                  std::string& opKey,
                   std::vector<std::unique_ptr<TDPatternNode>> arguments,
                   std::vector<std::string> argNames)
-      : op(op), arguments(std::move(arguments)), argNames(std::move(argNames)) {
+      : op(op), opKey(opKey),
+        arguments(std::move(arguments)), argNames(std::move(argNames)) {
   }
 
   NodeType getNodeType() override { return NodeType::Op; }
@@ -133,8 +137,9 @@ public:
     return std::make_pair(arguments[index].get(), argNames[index]);
   }
 
-  std::string getFormArgNameByActualArgName(std::string actualArgName) {
-    auto pos = std::find(argNames.begin(), argNames.end(), actualArgName);
+  std::string getArgSlotNameByActualArgName(std::string actualArgName) {
+    auto pos = std::find(argNames.begin(),
+                         argNames.end(), actualArgName);
     if (pos == argNames.end()) {
       return "";
     }
@@ -144,13 +149,14 @@ public:
 
 private:
   std::shared_ptr<TDOperator> op;
+  std::string opKey{""};
   std::vector<std::unique_ptr<TDPatternNode>> arguments;
   std::vector<std::string> argNames;
 };
 
 class TDPatternVarNode : public TDPatternNode {
 public:
-  TDPatternVarNode(std::shared_ptr<TDVariable> &var) : var(var) {}
+  TDPatternVarNode(std::shared_ptr<TDVariable> var) : var(var) {}
 
   NodeType getNodeType() override { return NodeType::Var; }
 
@@ -158,6 +164,19 @@ public:
 
 private:
   std::shared_ptr<TDVariable> var;
+};
+
+class TDPatternAttrNode: public TDPatternNode {
+public:
+
+  TDPatternAttrNode(std::shared_ptr<TDAttribute> attr) : attr(attr) {}
+
+  NodeType getNodeType() override { return NodeType::Attr; }
+
+  TDAttribute* getAttr() const { return attr.get(); }
+
+private:
+  std::shared_ptr<TDAttribute> attr;
 };
 
 /**
@@ -172,13 +191,13 @@ class TDPattern {
   std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
   //指向目标pattern。
   std::unique_ptr<TDPatternOpNode> targetPatternRoot;
-
+  //TODO: 存储拓扑排序后的节点？
   std::vector<AttrToCopy> attrsToCopy;
   std::map<std::string, std::vector<AttrToSet>> attrsToSet;
   std::map<std::string, std::vector<AttrToAssert>> attrsToAssert;
   std::map<std::string, std::vector<CustomTeller>> customTellers;
 
-  std::vector<std::string> conditionAttributes;
+  std::vector<std::string> conditionFlags;
 
   bool needCopyInputScale{false};
 
@@ -205,7 +224,7 @@ public:
   const std::vector<AttrToCopy> &getAttrsToCopy() { return this->attrsToCopy; }
 
   const std::vector<std::string> &getConditionAttribute() {
-    return this->conditionAttributes;
+    return this->conditionFlags;
   }
 
   const std::map<std::string, std::vector<AttrToSet>> &getAttrsToSet() {

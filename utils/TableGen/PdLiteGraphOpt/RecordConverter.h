@@ -6,8 +6,8 @@
 #define LLVM_RECORDCONVERTER_H
 
 #include "TDOperator.hpp"
+#include "TDOpArgument.h"
 #include "TDPattern.hpp"
-#include "TDVariable.hpp"
 #include "llvm/Support/Debug.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
@@ -27,6 +27,9 @@ class RecordConverter {
   // 存放生成的TDVariable实例，key是record的名字
   std::map<std::string, std::shared_ptr<TDVariable>> VarCache;
 
+  // 存放生成的TDAttribute实例，key是record的名字
+  std::map<std::string, std::shared_ptr<TDAttribute>> AttrCache;
+
   TDPatternOpNode *buildPatternNodeFromDagInit(llvm::DagInit *dagInit) {
     auto opInDag = llvm::dyn_cast<llvm::DefInit>(dagInit->getOperator());
     if (!opInDag) {
@@ -34,7 +37,7 @@ class RecordConverter {
     }
     auto opRecord = opInDag->getDef();
     auto op = OpCache.at(opRecord->getName().str());
-
+    std::string opKey = dagInit->getNameStr().str();
     std::vector<std::string> argNames;
     std::vector<std::unique_ptr<TDPatternNode>> argNodes;
     for (unsigned i = 0, count = dagInit->getNumArgs(); i < count; i++) {
@@ -45,15 +48,30 @@ class RecordConverter {
         auto argNodeInit = llvm::dyn_cast<llvm::DagInit>(argInit);
         TDPatternOpNode *newOpNode = buildPatternNodeFromDagInit(argNodeInit);
         argNodes.push_back(std::unique_ptr<TDPatternOpNode>(newOpNode));
-      } else {
+      }
+      // 如果dag此处的值为空，说明不关心var或attr的类型限制，只关心通过其名字建立的绑定关系
+      else if (llvm::isa<llvm::UnsetInit>(argInit)) {
+        if (op->getArgumentTypeAtIndex(i) == TDOpArgument::attribute) {
+          argNodes.push_back(std::make_unique<TDPatternAttrNode>(nullptr));
+        }
+        else {
+          argNodes.push_back(std::make_unique<TDPatternVarNode>(nullptr));
+        }
+      }
+      else {
         auto argNodeRec = llvm::dyn_cast<llvm::DefInit>(argInit)->getDef();
-        auto var = VarCache.at(argNodeRec->getName().str());
-
-        argNodes.push_back(std::make_unique<TDPatternVarNode>(var));
+        if (argNodeRec->isSubClassOf("Var")) {
+          auto var = VarCache.at(argNodeRec->getName().str());
+          argNodes.push_back(std::make_unique<TDPatternVarNode>(var));
+        }
+        else if (argNodeRec->isSubClassOf("OpAttr")) {
+          auto attr = AttrCache.at(argNodeRec->getName().str());
+          argNodes.push_back(std::make_unique<TDPatternAttrNode>(attr));
+        }
       }
     }
 
-    return new TDPatternOpNode(op, std::move(argNodes),
+    return new TDPatternOpNode(op, opKey, std::move(argNodes),
                                std::move(argNames));
   }
 
@@ -79,9 +97,19 @@ public:
       std::string type = rec->getValueAsString("type").str();
       std::string name = rec->getValueAsString("name").str();
       auto var = std::make_shared<TDVariable>(name, type);
-      var->setIsPersist(rec->getValueAsBit("isPersist"));
+      var->setIsPersist(rec->getValueAsBit("isPersistable"));
       var->setIsWeight(rec->getValueAsBit("isWeight"));
       VarCache.insert(std::make_pair(rec->getName().str(), var));
+    }
+
+    //先把所有Attr类型的Record读一遍
+    auto attrRecs = Records.getAllDerivedDefinitions("OpAttr");
+    for (llvm::Record *rec : attrRecs) {
+      std::string type = rec->getValueAsDef("type")->getName().str();
+      std::string name = rec->getValueAsString("name").str();
+      std::string value = rec->getValueAsString("value").str();
+      auto attr = std::make_shared<TDAttribute>(name, type, value);
+      AttrCache.insert(std::make_pair(rec->getName().str(), attr));
     }
 
     //然后把所有Op类型的Record读一遍
@@ -93,29 +121,36 @@ public:
       op->setTypeIsVariable(rec->getValueAsBit("typeIsVariable"));
 
       std::vector<std::string> names;
-      std::vector<std::shared_ptr<TDVariable>> args;
+      std::vector<std::shared_ptr<TDOpArgument>> args;
 
       auto opArgs = rec->getValueAsDag("arguments");
       auto opRes = rec->getValueAsDag("results");
       for (unsigned i = 0, count = opArgs->getNumArgs(); i < count; i++) {
-        auto defInit = llvm::dyn_cast<llvm::DefInit>(opArgs->getArg(i));
-        auto varRecName = defInit->getDef()->getName().str();
+        auto opArgRec =
+            llvm::dyn_cast<llvm::DefInit>(opArgs->getArg(i))
+            ->getDef();
+        auto recName = opArgRec->getName().str();
+
         names.push_back(opArgs->getArgNameStr(i).str());
-        args.push_back(VarCache.at(varRecName));
+        if (opArgRec->isSubClassOf("OpAttr")) {
+          args.push_back(AttrCache.at(recName));
+        } else if (opArgRec->isSubClassOf("Var")) {
+          args.push_back(VarCache.at(recName));
+        }
+
       }
 
       op->setArguments(args, names);
       names.clear();
-      args.clear();
-
+      std::vector<std::shared_ptr<TDVariable>> res;
       for (unsigned i = 0, count = opRes->getNumArgs(); i < count; i++) {
         auto defInit = llvm::dyn_cast<llvm::DefInit>(opRes->getArg(i));
         auto varRecName = defInit->getDef()->getName().str();
         names.push_back(opRes->getArgNameStr(i).str());
-        args.push_back(VarCache.at(varRecName));
+        res.push_back(VarCache.at(varRecName));
       }
 
-      op->setResult(args, names);
+      op->setResult(res, names);
       OpCache.insert(std::make_pair(rec->getName().str(), op));
     }
 
@@ -225,8 +260,8 @@ public:
         newPat.customTellers[teller.target].push_back(std::move(teller));
       }
 
-      //read `conditionAttr`
-      newPat.conditionAttributes = getStringList(rec, "conditionAttribute");
+      //read `conditionFlags`
+      newPat.conditionFlags = getStringList(rec, "conditionFlags");
       //read `bindTargets`
       newPat.bindTargets = getStringList(rec, "bindTargets");
       //read `excludeTargets`

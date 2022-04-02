@@ -23,6 +23,15 @@
 #define DEBUG_TYPE "pd-lite-graph-opt-pass-emitter"
 
 using namespace llvm;
+using namespace PdGraphOpt;
+
+namespace PdGraphOpt {
+enum ComparisonOperator {
+  GreaterThan = 0,
+  Equals = 1,
+  LessThan = 2
+};
+}
 
 namespace {
 
@@ -44,19 +53,76 @@ private:
   // op到它被分配的key间的映射。
   std::map<PdGraphOpt::TDPatternOpNode *, std::string> op2key;
 
-  // op到它被分配的key间的映射。
+  // op的key到op间的映射。
   std::map<std::string, PdGraphOpt::TDPatternOpNode *> key2op;
 
   //用户给op设定的key（如果有的话）到op被分配的key间的映射。
   std::map<std::string, std::string> opDesignatedKey2opKey;
 
-  // var的key到其所属的op的映射。
-  std::map<std::string, std::string> varKeyToSrcPatOpKey;
+  // argument的key到其所属的op的映射。
+  std::map<std::string, std::string> argKeyToSrcPatOpKey;
 
-  std::string srcPatOutputKey{"Out"};
+  std::vector<std::string> srcPatOutputSlotNames{"Out"};
 
   /// Pattern（有向图）的首个节点，融合时会作为替换点位
   PdGraphOpt::TDPatternOpNode *leadingOpNode{nullptr};
+
+  /// 生成了一个pass之后，重置状态
+  void resetState() {
+    leadingOpNode = nullptr;
+    srcPatOutputSlotNames = {"Out"};
+    argKeyToSrcPatOpKey.clear();
+    opDesignatedKey2opKey.clear();
+    opKeyAllocationRecord.clear();
+    varKeyAllocationRecord.clear();
+    key2op.clear();
+    op2key.clear();
+  }
+
+  //生成对一个算子输入参数的维度进行检查的代码
+  void EmitInputDimChecker(std::vector<std::string> inputNames,
+                           std::vector<int> dims,
+                           std::vector<ComparisonOperator> compOp,
+                           raw_ostream &os
+                           ) {
+    os << "[](const Node* node) -> bool {\n";
+    os << "  auto op_desc = *const_cast<Node*>(node)->stmt()->op_info();\n";
+    for (auto &name : inputNames) {
+      os << llvm::formatv("  auto input_{0}_name = op_desc.Input(\"{1}\").front();\n",
+                          name, name);
+    }
+    os << "  auto* scope = const_cast<Node*>(node)->AsStmt().op()->scope();\n";
+    for (auto &name : inputNames) {
+      os << llvm::formatv("  size_t {0}_rank = scope->FindVar(input_{1}_name)->Get<lite::Tensor>().dims().size();\n",
+                          name, name);
+    }
+
+    os << "  bool res = true;\n";
+
+    bool assertAllEqual = true;
+    for(int dim : dims) {
+      if (dim != 0) assertAllEqual = false;
+    }
+    static std::string compOps[] = {">", "==", "<"};
+    if (assertAllEqual) {
+      for (unsigned i = 1; i < inputNames.size(); i++) {
+        os << llvm::formatv("  res &= {0}_rank == {1}_rank;\n",
+                            inputNames[i - 1],
+                            inputNames[i]);
+      }
+    }
+    else {
+      for (unsigned i = 0; i < inputNames.size(); i++) {
+        os << llvm::formatv("  res &= {0}_rank {1} {2};\n",
+                            inputNames[i],
+                            compOps[compOp[i]],
+                            dims[i]);
+      }
+    }
+
+    os << "  return res;\n";
+    os << "}\n";
+  }
 
   void EmitSingleFileHeader(raw_ostream &os);
 
@@ -74,14 +140,15 @@ private:
 
   void EmitPassImpl(PdGraphOpt::TDPattern &pat, raw_ostream &os);
 
-  std::string dfsPatDag(PdGraphOpt::TDPatternOpNode *dag, raw_ostream &os,
+  std::string dfsSrcPatDag(PdGraphOpt::TDPatternOpNode *dag, raw_ostream &os,
                         PdGraphOpt::TDPattern &pat);
+
+  std::string dfsResPatDag(PdGraphOpt::TDPatternOpNode *dag, raw_ostream &os,
+                           PdGraphOpt::TDPattern &pat);
 
   std::string registerOp(PdGraphOpt::TDPatternOpNode *opNode);
 
   std::string getNewOpKey(std::string opType);
-
-  void resetState();
 
 public:
   PdLiteGraphOptPassEmitter(RecordKeeper &RK) : Records(RK) {}
@@ -130,14 +197,6 @@ std::string convertCamelToSnake(std::string camel) {
 
 } // anonymous namespace
 
-void PdLiteGraphOptPassEmitter::resetState() {
-  srcPatOutputKey = "Out";
-  opKeyAllocationRecord.clear();
-  varKeyAllocationRecord.clear();
-  opDesignatedKey2opKey.clear();
-  op2key.clear();
-}
-
 std::string
 PdLiteGraphOptPassEmitter::registerOp(PdGraphOpt::TDPatternOpNode *opNode) {
   if (op2key.count(opNode)) {
@@ -164,10 +223,32 @@ std::string PdLiteGraphOptPassEmitter::getNewOpKey(std::string opType) {
   }
 }
 
+void genAttrAssertCode(const AttrToAssert& attr, std::string opKey, raw_ostream &os) {
+  if (attr.useCustomAssert) {
+    os << llvm::formatv(
+        "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", {3});\n", opKey,
+        attr.dataType, attr.attrName, attr.customAssert);
+  }
+  //对于浮点数，考虑误差
+  else if (attr.dataType == "float" || attr.dataType == "double") {
+    os << llvm::formatv(
+        "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", "
+        "[]({3} attr) { return (std::fabs(attr - {4}) < 1e-5); });\n",
+        opKey, attr.dataType, attr.attrName, attr.dataType, attr.value);
+  }
+  // TODO: string 要不要加std sting？
+  else {
+    os << llvm::formatv(
+        "  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey, attr.dataType,
+        attr.attrName,
+        attr.dataType != "string" ? attr.value : "\"" + attr.value + "\"");
+  }
+}
+
 //遍历sourcePattern，生成定义VarNode、OpNode及其定义它们拓扑关系的代码
 //在EmitBuildPatternMethod中被调用
 std::string
-PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
+PdLiteGraphOptPassEmitter::dfsSrcPatDag(PdGraphOpt::TDPatternOpNode *dag,
                                      raw_ostream &os,
                                      PdGraphOpt::TDPattern &pat) {
 
@@ -175,33 +256,21 @@ PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   std::string opType = op->getTypeAuto();
 
   std::string opKey = registerOp(dag);
+  // TODO: 处理op的输出被绑定了key以及op多输出的情况
 
   //生成该dag的op对应的OpNode
   os << "  //Start op " << opKey << "\n";
   os << llvm::formatv("  auto* {0} = OpNode(\"{1}\", {2});", opKey, opKey,
                       opType);
   os << "\n";
+  // TODO: 什么时候它不是Intermediate？
   os << "  " << opKey << "->AsIntermediate();\n";
 
   //为这个OpNode添加断言
   if (pat.getAttrsToAssert().count(op->getKey())) {
     auto &attrs = pat.getAttrsToAssert().at(op->getKey());
     for (auto &&attr : attrs) {
-      if (attr.useCustomAssert) {
-        os << llvm::formatv(
-            "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", {3});\n", opKey,
-            attr.dataType, attr.attrName, attr.customAssert);
-      } else if (attr.dataType == "float" || attr.dataType == "double") {
-        os << llvm::formatv(
-            "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", "
-            "[]({3} attr) { return (std::fabs(attr - {4}) < 1e-5); });\n",
-            opKey, attr.dataType, attr.attrName, attr.dataType, attr.value);
-      } else {
-        os << llvm::formatv(
-            "  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey, attr.dataType,
-            attr.attrName,
-            attr.dataType != "string" ? attr.value : "\"" + attr.value + "\"");
-      }
+      genAttrAssertCode(attr, opKey, os);
     }
   }
   if (pat.getCustomTellers().count(op->getKey())) {
@@ -215,12 +284,26 @@ PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   os << "\n";
 
   //检查这个dag里面是否还嵌套着另一个dag
+  //检查这个dag里面是否有attribute，有的话当做断言处理
   auto &args = dag->getArguments();
   bool patWithoutDag = true;
-  for (auto &arg : args) {
-    if (arg->getNodeType() == PdGraphOpt::TDPatternNode::NodeType::Op) {
+  for (unsigned i = 0; i < args.size(); i++) {
+    auto arg = args[i].get();
+    auto nodeType = arg->getNodeType();
+    if (nodeType == PdGraphOpt::TDPatternNode::Op) {
       patWithoutDag = false;
-      break;
+    }
+    if (nodeType == PdGraphOpt::TDPatternNode::Attr) {
+      TDPatternAttrNode* node = (TDPatternAttrNode*)arg;
+      if (node->getAttr() != nullptr) {
+        AttrToAssert newAssert;
+        newAssert.target = op->getKey();
+        newAssert.value = node->getAttr()->getValue();
+        newAssert.dataType = node->getAttr()->getType();
+        newAssert.attrName = op->getArgumentAsAttrAtIndex(i)->getName();
+        genAttrAssertCode(newAssert, opKey, os);
+      }
+
     }
   }
   if (patWithoutDag) {
@@ -237,11 +320,11 @@ PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   //处理一个OpNode的参数，生成对应的VarNode
   for (unsigned i = 0, c = args.size(); i < c; i++) {
     //如果这个dag的参数是个Var，生成一个VarNode
-    if (args[i]->getNodeType() == PdGraphOpt::TDPatternNode::NodeType::Var) {
+    if (args[i]->getNodeType() == PdGraphOpt::TDPatternNode::Var) {
       //这个Var的名称（或者说是key，dag中指定的），作为生成VarNode时的变量名
       std::string argKey = argNames[i];
       inputs.push_back(argKey);
-      varKeyToSrcPatOpKey[argKey] = opKey;
+      argKeyToSrcPatOpKey[argKey] = opKey;
       os << llvm::formatv(
           "  auto* {0} = VarNode(\"{1}\")->assert_is_op_input({2}, "
           "\"{3}\")",
@@ -249,18 +332,23 @@ PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
 
       auto varArgPtr =
           static_cast<PdGraphOpt::TDPatternVarNode *>(args[i].get());
-      if (varArgPtr->getVar()->getIsWeight()) {
+      if (varArgPtr->getVar() && varArgPtr->getVar()->getIsWeight()) {
         os << "->assert_is_persistable_var()";
       }
       os << ";\n";
     }
+    // TODO: 增加对var的约束机制，比如维度的约束
+    else if (args[i]->getNodeType() == PdGraphOpt::TDPatternNode::Attr) {
+      std::string argKey = argNames[i];
+      inputs.push_back(argKey);
+      argKeyToSrcPatOpKey[argKey] = opKey;
+    }
 
     //如果这个dag的参数是DagInit，也就是说它是个Dag，所以递归调用本方法。
-    else if (args[i]->getNodeType() ==
-             PdGraphOpt::TDPatternNode::NodeType::Op) {
+    else if (args[i]->getNodeType() == PdGraphOpt::TDPatternNode::Op) {
 
       auto opArgPtr = static_cast<PdGraphOpt::TDPatternOpNode *>(args[i].get());
-      std::string innerOpKey = dfsPatDag(opArgPtr, os, pat);
+      std::string innerOpKey = dfsSrcPatDag(opArgPtr, os, pat);
       std::string innerOpType = opArgPtr->getOp()->getTypeAuto();
 
       std::vector<std::string> outputs;
@@ -299,6 +387,16 @@ PdLiteGraphOptPassEmitter::dfsPatDag(PdGraphOpt::TDPatternOpNode *dag,
   return opKey;
 }
 
+void genSetAttrCode(std::string opKey, const AttrToSet &attr, raw_ostream &os) {
+  if (attr.dataType == "string") {
+    os << llvm::formatv(
+        "  op_desc.SetAttr(\"{0}\", std::string(\"{1}\"));\n",
+        attr.attrName, attr.value);
+  } else {
+    os << llvm::formatv("  op_desc.SetAttr(\"{0}\", {1});\n", attr.attrName,
+                        attr.value);
+  }
+}
 //生成源码中`GenOpDesc`这个方法。
 void PdLiteGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
                                                     raw_ostream &os) {
@@ -325,8 +423,9 @@ void PdLiteGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
       if (attr.attrName != "#INPUT_SCALE")
         continue;
 
-      auto op = key2op[varKeyToSrcPatOpKey[attr.from]];
-      std::string formArgName = op->getFormArgNameByActualArgName(attr.from);
+      std::string formArgName =
+          key2op[argKeyToSrcPatOpKey[attr.from]]->getArgSlotNameByActualArgName(
+              attr.from);
       os << llvm::formatv(
           "  auto input_{0}_name = op_desc.Input(\"{1}\").front();\n",
           attr.from, formArgName);
@@ -360,44 +459,89 @@ void PdLiteGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
 
   auto targetPattern = pat.getTargetPatternRoot();
   auto targetPatOp = targetPattern->getOp();
-  auto &targetPatOpArgNames = targetPatOp->getArgNames();
+  auto &targetPatArgSlotNames = targetPatOp->getArgNames();
   auto &targetPatArgNames = targetPattern->getArgNames();
 
   os << llvm::formatv("  op_desc.SetType(\"{0}\");\n", targetPatOp->getType());
 
-  for (unsigned i = 0, count = targetPatOpArgNames.size(); i < count; i++) {
+  for (unsigned i = 0, count = targetPatArgSlotNames.size(); i < count; i++) {
+    if (targetPatOp->getArgumentTypeAtIndex(i)
+        != PdGraphOpt::TDOpArgument::variable) {
+      continue;
+    }
     os << llvm::formatv(
         "  op_desc.SetInput(\"{0}\", {matched.at(\"{1}\")->arg()->name});\n",
-        targetPatOpArgNames[i], targetPatArgNames[i]);
+        targetPatArgSlotNames[i], targetPatArgNames[i]);
   }
 
-  //  for (unsigned i = 0, c = targetPatOp  ->getResNames().size(); i < c; i++)
-  //  {
-  //    os << llvm::formatv(
-  //        "  op_desc.SetOutput(\"{0}\",
-  //        {matched.at(\"{1}\")->arg()->name});\n", targetPatOpArgNames[i],
-  //        targetPatArgNames[i]);
-  //  }
+    for (unsigned i = 0, c = targetPatOp->getResNames().size(); i < c; i++) {
+      os << llvm::formatv(
+          "  op_desc.SetOutput(\"{0}\", {matched.at(\"{1}\")->arg()->name});\n",
+          targetPatOp->getResNames()[i],
+          srcPatOutputSlotNames[i]);
+    }
 
-  os << llvm::formatv(
-      "  op_desc.SetOutput(\"{0}\", {matched.at(\"{1}\")->arg()->name});\n",
-      targetPatOp->getResNames()[0], srcPatOutputKey);
+//  os << llvm::formatv(
+//      "  op_desc.SetOutput(\"{0}\", {matched.at(\"{1}\")->arg()->name});\n",
+//      targetPatOp->getResNames()[0], srcPatOutputSlotNames);
 
   // handle AttrToSet
   //这里并没有考虑AttrToSet指定的target，目前认为target就是融合后的那个结点
-  const std::map<std::string, std::vector<PdGraphOpt::AttrToSet>> &attrsToSet =
-      pat.getAttrsToSet();
+  auto &attrsToSet = pat.getAttrsToSet();
   if (attrsToSet.count(targetPatOp->getKey())) {
     for (auto &attr : attrsToSet.at(targetPatOp->getKey())) {
-      if (attr.dataType == "string") {
+      genSetAttrCode("op_desc", attr, os);
+    }
+  }
+
+  //handle attrToMap and attrToSet(by attr as argument)
+  unsigned targetPatArgCount = targetPatArgNames.size();
+  auto &targetPatOpArgs = targetPatOp->getArguments();
+  for (unsigned  i = 0; i < targetPatOpArgs.size(); i++) {
+    if (targetPatOp->getArgumentTypeAtIndex(i)
+        != PdGraphOpt::TDOpArgument::attribute)
+      continue;
+
+    AttrToSet attr;
+    attr.attrName = targetPatArgSlotNames[i];
+    attr.dataType = targetPatOp->getArgumentAsAttrAtIndex(i)->getType();
+
+    if (i < targetPatArgCount) {
+      //假如有绑定且绑定在上下文中找得到，按map处理
+      std::string actualArgName = targetPatArgNames[i];
+      if (actualArgName != ""
+          && argKeyToSrcPatOpKey.count(actualArgName) != 0) {
+        std::string thatOpKey = argKeyToSrcPatOpKey[actualArgName];
+        auto thatOp = key2op[thatOpKey];
+
+        std::string thatAttrName
+            = thatOp->getArgSlotNameByActualArgName(actualArgName);
+        std::string thisAttrName = attr.attrName;
+        std::string dataType = attr.dataType;
+
         os << llvm::formatv(
-            "  op_desc.SetAttr(\"{0}\", std::string(\"{1}\"));\n",
-            attr.attrName, attr.value);
-      } else {
-        os << llvm::formatv("  op_desc.SetAttr(\"{0}\", {1});\n", attr.attrName,
-                            attr.value);
+            "  op_desc.SetAttr(\"{0}\", "
+            "matched.at(\"{1}\")->stmt()->op_info()->GetAttr<{2}>(\"{3}\"));\n",
+            thisAttrName, thatOpKey, dataType, thatAttrName);
+        continue;
+      }
+      //否则，如果有值，采用参数值
+      else if (static_cast<TDPatternAttrNode*>(
+                   targetPattern->getArguments()[i].get())
+                   ->getAttr() != nullptr) {
+        attr.value = static_cast<TDPatternAttrNode*>(
+                        targetPattern->getArguments()[i].get())->getAttr()->getValue();
+      }
+      //否则，使用默认值
+      else {
+        attr.value = targetPatOp->getArgumentAsAttrAtIndex(i)->getValue();
       }
     }
+    //这个必然使用默认值
+    else {
+      attr.value = targetPatOp->getArgumentAsAttrAtIndex(i)->getValue();
+    }
+    genSetAttrCode("op_desc", attr, os);
   }
 
   // handle AttrToCopy
@@ -419,6 +563,13 @@ void PdLiteGraphOptPassEmitter::EmitGenOpDescMethod(PdGraphOpt::TDPattern &pat,
 
   os << "  return op_desc;\n";
   os << "}\n";
+}
+
+std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
+                              PdGraphOpt::TDPatternOpNode *dag,
+                              raw_ostream &os,
+                              PdGraphOpt::TDPattern &pat) {
+  return "";
 }
 
 //生成源码中`InsertNewNode`这个方法。
@@ -454,13 +605,18 @@ void PdLiteGraphOptPassEmitter::EmitInsertNewNodeMethod(
                       "graph->GraphCreateInstructNode({0}_op, valid_places);\n",
                       targetPatOpKey);
 
-  for (auto &argName : targetPat->getArgNames()) {
-    os << llvm::formatv(
-        "  IR_NODE_LINK_TO(matched.at(\"{0}\"), new_op_node);\n", argName);
-  }
+  for (unsigned i = 0; i < targetPat->getArgNames().size(); i++) {
+    if (targetPat->getOp()->getArgumentTypeAtIndex(i)
+        == PdGraphOpt::TDOpArgument::variable) {
+      os << llvm::formatv(
+          "  IR_NODE_LINK_TO(matched.at(\"{0}\"), new_op_node);\n",
+          targetPat->getArgNames()[i]);
+    }
 
+  }
+  //TODO: 这里只需要连接到第一个输出节点么？
   os << llvm::formatv("  IR_NODE_LINK_TO(new_op_node, matched.at(\"{0}\"));\n",
-                      srcPatOutputKey);
+                      srcPatOutputSlotNames[0]);
   os << "}\n";
 }
 
@@ -471,15 +627,21 @@ void PdLiteGraphOptPassEmitter::EmitBuildPatternMethod(
 
   os << "void " << pat.getNameWithoutPat() << "Fuser::BuildPattern() {\n";
 
-  std::string innerOpKey = dfsPatDag(srcPatRoot, os, pat);
-  this->srcPatOutputKey = srcPatRoot->getOp()->getResNames()[0];
+  std::string innerOpKey = dfsSrcPatDag(srcPatRoot, os, pat);
+  this->srcPatOutputSlotNames = srcPatRoot->getOp()->getResNames();
   std::string innerOpType = srcPatRoot->getOp()->getTypeAuto();
-  os << llvm::formatv(
-      "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
-      srcPatOutputKey, srcPatOutputKey, innerOpType, srcPatOutputKey);
 
-  os << llvm::formatv("  {0}_inputs >> *{1} >> *{2};\n", innerOpKey, innerOpKey,
-                      srcPatOutputKey);
+  for (auto& srcPatOutputSlotName: this->srcPatOutputSlotNames) {
+    os << llvm::formatv(
+        "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
+        srcPatOutputSlotName, srcPatOutputSlotName, innerOpType,
+        srcPatOutputSlotName);
+  }
+  os << llvm::formatv("  std::vector<PMNode*> {0}_outputs{1};\n",
+                      innerOpKey,
+                      genListString(this->srcPatOutputSlotNames,",", "{", "}"));
+  os << llvm::formatv("  {0}_inputs >> *{1} >> {0}_outputs;\n", innerOpKey,
+                      innerOpKey, innerOpKey);
 
   os << "}\n";
 }
