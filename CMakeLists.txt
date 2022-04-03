@@ -1068,7 +1068,7 @@ if( LLVM_INCLUDE_TOOLS )
 endif()
 
 if( LLVM_INCLUDE_RUNTIMES )
-  add_subdirectory(runtimes)
+  #add_subdirectory(runtimes)
 endif()
 
 if( LLVM_INCLUDE_EXAMPLES )
@@ -1123,7 +1123,7 @@ if( LLVM_INCLUDE_TESTS )
 endif()
 
 if (LLVM_INCLUDE_DOCS)
-  add_subdirectory(docs)
+  #add_subdirectory(docs)
 endif()
 
 add_subdirectory(cmake/modules)
