@@ -99,13 +99,14 @@ public:
       auto var = std::make_shared<TDVariable>(name, type);
       var->setIsPersist(rec->getValueAsBit("isPersistable"));
       var->setIsWeight(rec->getValueAsBit("isWeight"));
+      var->setDataType(rec->getValueAsString("dataType").str());
       VarCache.insert(std::make_pair(rec->getName().str(), var));
     }
 
     //先把所有Attr类型的Record读一遍
     auto attrRecs = Records.getAllDerivedDefinitions("OpAttr");
     for (llvm::Record *rec : attrRecs) {
-      std::string type = rec->getValueAsDef("type")->getName().str();
+      std::string type = rec->getValueAsDef("dataType")->getName().str();
       std::string name = rec->getValueAsString("name").str();
       std::string value = rec->getValueAsString("value").str();
       auto attr = std::make_shared<TDAttribute>(name, type, value);
@@ -151,6 +152,10 @@ public:
       }
 
       op->setResult(res, names);
+      // 特殊情况
+      if (op->getType() == "DirectCompute") {
+        op->setDirectComputeType(rec->getValueAsString("directComputeType").str());
+      }
       OpCache.insert(std::make_pair(rec->getName().str(), op));
     }
 

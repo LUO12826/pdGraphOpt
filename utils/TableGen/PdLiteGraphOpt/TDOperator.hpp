@@ -18,6 +18,7 @@ namespace PdGraphOpt {
 class TDOperator {
   std::string key;
   std::string type;
+  std::string directComputeType{""};
   bool typeIsVariable{false};
   std::string summary{""};
   std::string description{""};
@@ -31,8 +32,20 @@ public:
   explicit TDOperator(std::string &key, std::string &type): key(key), type(type) {
   }
 
+  void setDirectComputeType(std::string type) {
+    this->directComputeType = type;
+  }
+
+  std::string getDirectComputeType() {
+    return this->directComputeType;
+  }
+
   void setKey(std::string key) {
     this->key = key;
+  }
+
+  std::string getKey() {
+    return key;
   }
 
   void setTypeIsVariable(bool yesOrNo) {
@@ -41,10 +54,6 @@ public:
 
   bool getTypeIsVariable() {
     return this->typeIsVariable;
-  }
-
-  std::string getKey() {
-    return key;
   }
 
   std::string getTypeAuto() {
@@ -121,7 +130,7 @@ public:
       }
       else {
         attrs << argNames[i] << ":"
-            << std::static_pointer_cast<TDAttribute>(arguments[i])->getType()
+            << std::static_pointer_cast<TDAttribute>(arguments[i])->getDataType()
             << ", ";
       }
 

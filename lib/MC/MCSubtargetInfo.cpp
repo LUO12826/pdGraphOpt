@@ -26,7 +26,7 @@ static const T *Find(StringRef S, ArrayRef<T> A) {
   // Binary search the array
   auto F = llvm::lower_bound(A, S);
   // If not found then return NULL
-  if (F == A.end() || StringRef(F->Key) != S) return nullptr;
+  if (F == A.end() || StringRef(F->getDesignatedOutputKey) != S) return nullptr;
   // Return the found array item
   return F;
 }
@@ -88,7 +88,7 @@ template <typename T>
 static size_t getLongestEntryLength(ArrayRef<T> Table) {
   size_t MaxLen = 0;
   for (auto &I : Table)
-    MaxLen = std::max(MaxLen, std::strlen(I.Key));
+    MaxLen = std::max(MaxLen, std::strlen(I.getDesignatedOutputKey));
   return MaxLen;
 }
 

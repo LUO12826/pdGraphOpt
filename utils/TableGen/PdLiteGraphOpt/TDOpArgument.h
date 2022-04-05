@@ -22,6 +22,8 @@ public:
 class TDVariable: public TDOpArgument {
   std::string name;
   std::string type;
+  std::string dataType;
+  std::string value;
 
   bool isWeight{false};
   bool isPersistable{false};
@@ -31,6 +33,14 @@ public:
   TDVariable(std::string &name, std::string &type) {
     this->name = name;
     this->type = type;
+  }
+
+  void setDataType(std::string typ) {
+      this->dataType = typ;
+  }
+
+  std::string getDataType() {
+      return dataType;
   }
 
   ArgumentType getArgumentType() override {
@@ -64,7 +74,7 @@ public:
 
 class TDAttribute: public TDOpArgument {
   std::string name;
-  std::string type;
+  std::string dataType;
   std::string value;
 
 public:
@@ -72,20 +82,20 @@ public:
     return TDOpArgument::attribute;
   }
 
-  TDAttribute(std::string &type, std::string value) {
-    this->type = type;
+  TDAttribute(std::string &type, std::string &value) {
+    this->dataType = type;
     this->value = value;
   }
 
-  TDAttribute(std::string &name, std::string &type, std::string value) {
+  TDAttribute(std::string &name, std::string &type, std::string &value) {
     this->name = name;
-    this->type = type;
+    this->dataType = type;
     this->value = value;
   }
 
   //attribute的数据类型。返回的是小写。
-  std::string getType() {
-    std::string t = type;
+  std::string getDataType() {
+    std::string t = dataType;
     std::transform(t.begin(), t.end(), t.begin(), tolower);
     return t;
   }

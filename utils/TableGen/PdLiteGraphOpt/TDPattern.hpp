@@ -12,6 +12,9 @@
 #include "TDOpArgument.h"
 #include <map>
 #include <memory>
+#include <unordered_set>
+#include <unordered_map>
+#include <queue>
 
 
 namespace PdGraphOpt {
@@ -98,6 +101,7 @@ struct CustomTeller {
   std::string teller;
 };
 
+
 /**
  * 内存中以树的形式存储td中描述的pattern，该类为树的结点类。
  */
@@ -107,51 +111,6 @@ public:
 
   virtual ~TDPatternNode() {}
   virtual NodeType getNodeType() = 0;
-};
-
-class TDPatternOpNode : public TDPatternNode {
-public:
-  TDPatternOpNode(std::shared_ptr<TDOperator> &op,
-                  std::string& opKey,
-                  std::vector<std::unique_ptr<TDPatternNode>> arguments,
-                  std::vector<std::string> argNames)
-      : op(op), opKey(opKey),
-        arguments(std::move(arguments)), argNames(std::move(argNames)) {
-  }
-
-  NodeType getNodeType() override { return NodeType::Op; }
-
-  TDOperator* getOp() { return op.get(); }
-
-  std::vector<std::unique_ptr<TDPatternNode>> &getArguments() {
-    return arguments;
-  }
-
-  std::vector<std::string> &getArgNames() { return argNames; }
-
-  std::pair<TDPatternNode *, std::string> getArgAndName(unsigned index) {
-    if (index > argNames.size()) {
-      llvm::PrintFatalError("Index out of bound while getting arguments "
-                            "from `TDPatternOpNode`.");
-    }
-    return std::make_pair(arguments[index].get(), argNames[index]);
-  }
-
-  std::string getArgSlotNameByActualArgName(std::string actualArgName) {
-    auto pos = std::find(argNames.begin(),
-                         argNames.end(), actualArgName);
-    if (pos == argNames.end()) {
-      return "";
-    }
-    long index = pos - argNames.begin();
-    return op->getArgNames()[index];
-  }
-
-private:
-  std::shared_ptr<TDOperator> op;
-  std::string opKey{""};
-  std::vector<std::unique_ptr<TDPatternNode>> arguments;
-  std::vector<std::string> argNames;
 };
 
 class TDPatternVarNode : public TDPatternNode {
@@ -179,6 +138,99 @@ private:
   std::shared_ptr<TDAttribute> attr;
 };
 
+class TDPatternOpNode : public TDPatternNode {
+public:
+  TDPatternOpNode(std::shared_ptr<TDOperator> &op,
+                  std::string& opKey,
+                  std::vector<std::unique_ptr<TDPatternNode>> arguments,
+                  std::vector<std::string> argNames)
+      : op(op), designatedOutputKey(opKey),
+        arguments(std::move(arguments)), argNames(std::move(argNames)) {
+  }
+
+  NodeType getNodeType() override { return NodeType::Op; }
+
+  TDOperator* getOp() { return op.get(); }
+
+  std::vector<std::unique_ptr<TDPatternNode>> &getArguments() {
+    return arguments;
+  }
+
+  std::vector<std::string> &getArgNames() { return argNames; }
+
+  std::pair<TDPatternNode *, std::string> getArgAndName(unsigned index) {
+    if (index > argNames.size()) {
+      llvm::PrintFatalError("Index out of bound while getting arguments "
+                            "from `TDPatternOpNode`.");
+    }
+    return std::make_pair(arguments[index].get(), argNames[index]);
+  }
+
+  TDAttribute* getSetOrDefaultAttrAtIndex(unsigned index) {
+
+
+    if (index >= op->getArgNames().size()) return nullptr;
+    if (index >= argNames.size()) {
+      return op->getArgumentAsAttrAtIndex(index).get();
+    }
+    else {
+      auto attr =
+          static_cast<TDPatternAttrNode*>(arguments[index].get())->getAttr();
+      if (attr != nullptr) return attr;
+      return op->getArgumentAsAttrAtIndex(index).get();
+    }
+  }
+
+  std::string getArgSlotNameByActualArgName(std::string actualArgName) {
+    auto pos = std::find(argNames.begin(),
+                         argNames.end(), actualArgName);
+    if (pos == argNames.end()) {
+      return "";
+    }
+    long index = pos - argNames.begin();
+    return op->getArgNames()[index];
+  }
+
+  long getIndexByActualArgName(std::string name) {
+    auto pos = std::find(argNames.begin(),
+                         argNames.end(), name);
+
+    if (pos == argNames.end()) {
+      return -1;
+    }
+    return pos - argNames.begin();
+  }
+
+  bool isArgTypeCorrect(unsigned index) {
+    unsigned slotNum = op->getArgNames().size();
+    unsigned realArgNum = argNames.size();
+    if (index < 0) return true;
+    if (index >= slotNum) return false;
+    if (index >= realArgNum && index < slotNum) return true;
+
+    if (op->getArgumentTypeAtIndex(index) == TDOpArgument::variable) {
+      if (arguments[index]->getNodeType() == Var) return true;
+      if (arguments[index]->getNodeType() == Op) return true;
+      return false;
+    }
+    if (op->getArgumentTypeAtIndex(index) == TDOpArgument::attribute) {
+      if (arguments[index]->getNodeType() == Attr) return true;
+      return false;
+    }
+    return false;
+  }
+
+  std::string getDesignatedOutputKey() {
+    return designatedOutputKey;
+  }
+
+private:
+  std::shared_ptr<TDOperator> op;
+  std::string designatedOutputKey{""};
+  std::vector<std::unique_ptr<TDPatternNode>> arguments;
+  std::vector<std::string> argNames;
+};
+
 /**
  * 用于表示td文件中描述的一个图变换pattern
  */
@@ -191,6 +243,10 @@ class TDPattern {
   std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
   //指向目标pattern。
   std::unique_ptr<TDPatternOpNode> targetPatternRoot;
+
+  std::vector<TDPatternNode*> sourcePatternTopological;
+  
+  std::vector<TDPatternNode*> targetPatternTopological;
   //TODO: 存储拓扑排序后的节点？
   std::vector<AttrToCopy> attrsToCopy;
   std::map<std::string, std::vector<AttrToSet>> attrsToSet;
@@ -211,16 +267,113 @@ class TDPattern {
 
   std::vector<std::string> excludeTargets;
 
+  std::unordered_set<std::string> varKeysToHold;
+
+  std::unordered_map<std::string, TDPatternNode*> src_outputKeys2Node;
+
+  std::unordered_map<std::string, TDPatternNode*> tgt_outputKeys2Node;
+
+  std::unordered_map<TDPatternNode*, TDPatternNode*> tgt_edges;
+
+
+  void
+  topologicalSort(std::map<TDPatternNode*, std::vector<TDPatternNode*>> &adjTable,
+                  std::map<TDPatternNode*, int> &inDegree,
+                  int nodeCount) {
+    std::queue<TDPatternNode*> q;
+    for (auto &&deg : inDegree) {
+      if (deg.second == 0)
+        q.push(deg.first);
+    }
+
+    int count = 0;
+    while (!q.empty()) {
+      TDPatternNode* v = q.front();
+      q.pop();
+      targetPatternTopological.push_back(v);
+      count++;
+
+      auto& vBeginEdges = adjTable[v];
+      for (auto node: vBeginEdges) {
+
+        if(0 == (--inDegree[node]))
+          q.push(node);
+      }
+    }
+
+    if (count < nodeCount) {
+      llvm::PrintFatalError("target pattern has circle");
+    }
+  }
+
 public:
   TDPattern(std::string name,
             std::unique_ptr<TDPatternOpNode> &&sourcePatternRoot,
             std::unique_ptr<TDPatternOpNode> &&targetPatternRoot)
       : name(name), sourcePatternRoot(std::move(sourcePatternRoot)),
-        targetPatternRoot(std::move(targetPatternRoot)) {}
+        targetPatternRoot(std::move(targetPatternRoot)) {
+
+    auto callback1 = [&](TDPatternNode *node) {
+      if (node->getNodeType() == TDPatternNode::Op) {
+        auto *opNode = static_cast<TDPatternOpNode*>(node);
+        //如果用户为这个op指派了输出key，说明可能要引用这个op的输出，因此这里记录一下
+        if (opNode->getDesignatedOutputKey() != "") {
+          tgt_outputKeys2Node[opNode->getDesignatedOutputKey()] = opNode;
+        }
+        if (opNode->getOp()->getType() == "DirectCompute") return;
+        //找出那些在target pattern里直接用到的绑定名。
+        //这些绑定名对应的变量在source pattern和target pattern中都用到，
+        //因此不用标记为intermediate节点，也就不会被移除。
+        for (unsigned i = 0; i < opNode->getArgNames().size(); i++) {
+          if (i >= opNode->getOp()->getArgNames().size()) break;
+          varKeysToHold.insert(opNode->getArgNames()[i]);
+        }
+      }
+    };
+    traversePattern(this->targetPatternRoot.get(), callback1);
+
+    std::map<TDPatternNode*, std::vector<TDPatternNode*>> adjTable;
+    std::map<TDPatternNode*, int> inDegree;
+    int nodeCount = 0;
+
+    //构建邻接表和入度数表
+    auto callback2= [&](TDPatternNode *node) {
+      nodeCount++;
+      inDegree[node] = 0;
+      if (node->getNodeType() == TDPatternNode::Op) {
+        auto *opNode = static_cast<TDPatternOpNode*>(node);
+
+        auto &opActualArgNames = opNode->getArgNames();
+        for (unsigned i = 0; i < opActualArgNames.size(); i++) {
+          if (i >= opNode->getOp()->getArgNames().size()) {
+            llvm::PrintFatalError(opNode->getOp()->getType() +
+                                  ": Op node's actual arguments "
+                                  "count bigger than argument slot count");
+          }
+
+          if (tgt_outputKeys2Node.count(opActualArgNames[i])) {
+            adjTable[tgt_outputKeys2Node[opActualArgNames[i]]].push_back(node);
+            inDegree[node]++;
+          }
+          else {
+            adjTable[opNode->getArguments()[i].get()].push_back(node);
+            inDegree[node]++;
+          }
+        }
+      }
+    };
+    traversePattern(this->targetPatternRoot.get(), callback2);
+
+    //target pattern 拓扑排序
+    topologicalSort(adjTable, inDegree, nodeCount);
+  }
+
 
 
   //getters and setters
-
+  const std::vector<TDPatternNode*>& getTargetTopological() {
+    return targetPatternTopological;
+  }
   const std::vector<AttrToCopy> &getAttrsToCopy() { return this->attrsToCopy; }
 
   const std::vector<std::string> &getConditionAttribute() {
@@ -266,6 +419,10 @@ public:
 
   //end getter and setters
 
+  TDPatternOpNode* getTargetOpByDesignatedKey(std::string key) {
+    return static_cast<TDPatternOpNode*>(tgt_outputKeys2Node[key]);
+  }
+
   /**
    * paddle中有这么一种情况，Fuser中需要提供一个op的类型，但是这个类型并不直接字符串
    * 硬编码在Fuser中，而是以字符串变量的方式提供。
@@ -283,6 +440,10 @@ public:
     };
     traversePattern(sourcePatternRoot.get(), callback);
     return res;
+  }
+
+  bool isVarDirectlyUsedByTargetPattern(std::string varKey) {
+    return varKeysToHold.count(varKey) != 0;
   }
 
   std::string getDescription() {
