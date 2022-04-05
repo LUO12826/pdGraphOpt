@@ -19,6 +19,9 @@
 
 namespace PdGraphOpt {
 
+/**
+ * 属性操作（断言、设置、映射）等的基础结构
+ */
 struct AttrOperationBase {
   std::string attrName;
   std::string dataType;
@@ -113,6 +116,9 @@ public:
   virtual NodeType getNodeType() = 0;
 };
 
+/**
+ * 内存中以树的形式存储td中描述的pattern，该类为树的变量结点类。
+ */
 class TDPatternVarNode : public TDPatternNode {
 public:
   TDPatternVarNode(std::shared_ptr<TDVariable> var) : var(var) {}
@@ -125,6 +131,9 @@ private:
   std::shared_ptr<TDVariable> var;
 };
 
+/**
+ * 内存中以树的形式存储td中描述的pattern，该类为树的属性结点类。
+ */
 class TDPatternAttrNode: public TDPatternNode {
 public:
 
@@ -138,6 +147,9 @@ private:
   std::shared_ptr<TDAttribute> attr;
 };
 
+/**
+ * 内存中以树的形式存储td中描述的pattern，该类为树的op结点类。
+ */
 class TDPatternOpNode : public TDPatternNode {
 public:
   TDPatternOpNode(std::shared_ptr<TDOperator> &op,
@@ -235,78 +247,9 @@ private:
  * 用于表示td文件中描述的一个图变换pattern
  */
 class TDPattern {
-
-  friend class RecordConverter;
-  // pattern的名字
-  std::string name;
-  //指向源pattern。源pattern和目标pattern都以树的结构表示
-  std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
-  //指向目标pattern。
-  std::unique_ptr<TDPatternOpNode> targetPatternRoot;
-
-  std::vector<TDPatternNode*> sourcePatternTopological;
-  
-  std::vector<TDPatternNode*> targetPatternTopological;
-  //TODO: 存储拓扑排序后的节点？
-  std::vector<AttrToCopy> attrsToCopy;
-  std::map<std::string, std::vector<AttrToSet>> attrsToSet;
-  std::map<std::string, std::vector<AttrToAssert>> attrsToAssert;
-  std::map<std::string, std::vector<CustomTeller>> customTellers;
-
-  std::vector<std::string> conditionFlags;
-
-  bool needCopyInputScale{false};
-
-  bool hasMultipleTargets{false};
-
-  int benefitDelta{0};
-
-  std::string kernelName;
-
-  std::vector<std::string> bindTargets;
-
-  std::vector<std::string> excludeTargets;
-
-  std::unordered_set<std::string> varKeysToHold;
-
-  std::unordered_map<std::string, TDPatternNode*> src_outputKeys2Node;
-
-  std::unordered_map<std::string, TDPatternNode*> tgt_outputKeys2Node;
-
-  std::unordered_map<TDPatternNode*, TDPatternNode*> tgt_edges;
-
-
-  void
-  topologicalSort(std::map<TDPatternNode*, std::vector<TDPatternNode*>> &adjTable,
-                  std::map<TDPatternNode*, int> &inDegree,
-                  int nodeCount) {
-    std::queue<TDPatternNode*> q;
-    for (auto &&deg : inDegree) {
-      if (deg.second == 0)
-        q.push(deg.first);
-    }
-
-    int count = 0;
-    while (!q.empty()) {
-      TDPatternNode* v = q.front();
-      q.pop();
-      targetPatternTopological.push_back(v);
-      count++;
-
-      auto& vBeginEdges = adjTable[v];
-      for (auto node: vBeginEdges) {
-
-        if(0 == (--inDegree[node]))
-          q.push(node);
-      }
-    }
-
-    if (count < nodeCount) {
-      llvm::PrintFatalError("target pattern has circle");
-    }
-  }
-
 public:
+  friend class RecordConverter;
+
   TDPattern(std::string name,
             std::unique_ptr<TDPatternOpNode> &&sourcePatternRoot,
             std::unique_ptr<TDPatternOpNode> &&targetPatternRoot)
@@ -367,8 +310,6 @@ public:
     //target pattern 拓扑排序
     topologicalSort(adjTable, inDegree, nodeCount);
   }
-
-
 
   //getters and setters
   const std::vector<TDPatternNode*>& getTargetTopological() {
@@ -452,6 +393,75 @@ public:
   }
 
 private:
+  // pattern的名字
+  std::string name;
+  //指向源pattern。源pattern和目标pattern都以树的结构表示
+  std::unique_ptr<TDPatternOpNode> sourcePatternRoot;
+  //指向目标pattern。
+  std::unique_ptr<TDPatternOpNode> targetPatternRoot;
+
+  std::vector<TDPatternNode*> sourcePatternTopological;
+  
+  std::vector<TDPatternNode*> targetPatternTopological;
+  
+  std::vector<AttrToCopy> attrsToCopy;
+  std::map<std::string, std::vector<AttrToSet>> attrsToSet;
+  std::map<std::string, std::vector<AttrToAssert>> attrsToAssert;
+  std::map<std::string, std::vector<CustomTeller>> customTellers;
+
+  std::vector<std::string> conditionFlags;
+
+  bool needCopyInputScale{false};
+
+  bool hasMultipleTargets{false};
+
+  int benefitDelta{0};
+
+  std::string kernelName;
+
+  std::vector<std::string> bindTargets;
+
+  std::vector<std::string> excludeTargets;
+
+  std::unordered_set<std::string> varKeysToHold;
+
+  std::unordered_map<std::string, TDPatternNode*> src_outputKeys2Node;
+
+  std::unordered_map<std::string, TDPatternNode*> tgt_outputKeys2Node;
+
+  std::unordered_map<TDPatternNode*, TDPatternNode*> tgt_edges;
+
+
+  void
+  topologicalSort(std::map<TDPatternNode*, std::vector<TDPatternNode*>> &adjTable,
+                  std::map<TDPatternNode*, int> &inDegree,
+                  int nodeCount) {
+    std::queue<TDPatternNode*> q;
+    for (auto &&deg : inDegree) {
+      if (deg.second == 0)
+        q.push(deg.first);
+    }
+
+    int count = 0;
+    while (!q.empty()) {
+      TDPatternNode* v = q.front();
+      q.pop();
+      targetPatternTopological.push_back(v);
+      count++;
+
+      auto& vBeginEdges = adjTable[v];
+      for (auto node: vBeginEdges) {
+
+        if(0 == (--inDegree[node]))
+          q.push(node);
+      }
+    }
+
+    if (count < nodeCount) {
+      llvm::PrintFatalError("target pattern has circle");
+    }
+  }
+
   /**
    * 遍历一个pattern树
    */

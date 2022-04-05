@@ -280,7 +280,7 @@ void PdLiteGraphOptPassEmitter::EmitBuildPatternMethod(
   bool first = true;
   for (unsigned i = 0; i < srcPatOutputNames.size(); i++) {
     os << llvm::formatv(
-        "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
+        "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\")",
         srcPatOutputNames[i], srcPatOutputNames[i], innerOpType,
         srcPatRoot->getOp()->getResNames()[i]);
     if (!first) {

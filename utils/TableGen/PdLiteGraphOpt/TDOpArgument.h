@@ -7,6 +7,9 @@
 
 namespace PdGraphOpt {
 
+/**
+ * 表示tablegen中op的参数，包括变量和属性
+ */
 class TDOpArgument {
 public:
 
@@ -19,6 +22,9 @@ public:
   virtual ArgumentType getArgumentType() = 0;
 };
 
+/**
+ * 表示tablegen中op的变量参数
+ */
 class TDVariable: public TDOpArgument {
   std::string name;
   std::string type;
@@ -72,6 +78,9 @@ public:
   }
 };
 
+/**
+ * 表示tablegen中op的属性参数
+ */
 class TDAttribute: public TDOpArgument {
   std::string name;
   std::string dataType;

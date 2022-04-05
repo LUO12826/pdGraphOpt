@@ -15,6 +15,9 @@
 
 namespace PdGraphOpt {
 
+/**
+ * 表示tablegen中的op
+ */
 class TDOperator {
   std::string key;
   std::string type;
