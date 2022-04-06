@@ -47,6 +47,8 @@ public:
     this->key = key;
   }
 
+  /// 获取op的key。注意这个key是用户设定的key，
+  /// 既不是代表输出结果的key，也不是代码生成时自动分配的key。
   std::string getKey() {
     return key;
   }
@@ -73,6 +75,15 @@ public:
 
   std::vector<std::string>& getArgNames() {
       return argNames;
+  };
+
+  std::vector<std::string> getVarNames() {
+    std::vector<std::string> res;
+    for (unsigned i = 0; i < argNames.size(); ++i) {
+      if (getArgumentTypeAtIndex(i) == TDOpArgument::variable)
+        res.push_back(argNames[i]);
+    }
+    return res;
   };
 
   TDOpArgument::ArgumentType getArgumentTypeAtIndex(unsigned index) {

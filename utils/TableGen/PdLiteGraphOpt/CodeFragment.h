@@ -55,6 +55,26 @@ static std::string nameSpaceMirEnd = R"(}  // namespace mir
 }  // namespace paddle
 )";
 
+static std::string rankChecker = R"(
+bool assertRankEquals(const Node* node, std::string slotName, unsigned val) {
+  auto op = const_cast<Node*>(node)->stmt()->op();
+  auto scope = op->scope();
+  auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())
+                 ->Get<lite::Tensor>().dims();
+  auto rank = dim.size();
+  return rank == val;
+}
+
+bool assertRankInRange(const Node* node, std::string slotName, unsigned low, unsigned high) {
+  auto op = const_cast<Node*>(node)->stmt()->op();
+  auto scope = op->scope();
+  auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())
+                  ->Get<lite::Tensor>().dims();
+  auto rank = dim.size();
+  return rank >= low && rank <= high;
+}
+)";
+
 static std::string directElementWiseCompute = R"(
 TensorLite directEleWiseAddFloat32(TensorLite *a, float b) {
   TensorLite res;

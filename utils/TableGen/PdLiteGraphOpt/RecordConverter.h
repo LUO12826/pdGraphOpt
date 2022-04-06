@@ -221,6 +221,25 @@ public:
         newPat.attrsToSet[attr.target].push_back(std::move(attr));
       }
 
+      // read `extraAssertions`
+      auto extraAssertionsList = rec->getValueAsListOfDefs("extraAssertions");
+      for (auto assertRec : extraAssertionsList) {
+
+        if (!assertRec->isSubClassOf("ExtraCondition")) {
+          llvm::PrintFatalError(
+              "Every item in extraAssertions list must be a ExtraCondition instance.");
+        }
+        ExtraCondition cond;
+        cond.conditionType = assertRec->getValueAsString("conditionType").str();
+        cond.sourceNode = assertRec->getValueAsString("sourceNode").str();
+        cond.targetNode = assertRec->getValueAsString("targetNode").str();
+        cond.dataType = assertRec->getValueAsString("dataType").str();
+        cond.value1 = assertRec->getValueAsString("value1").str();
+        cond.value2 = assertRec->getValueAsString("value2").str();
+        cond.value3 = assertRec->getValueAsString("value3").str();
+        newPat.extraAssertions[cond.conditionType].push_back(std::move(cond));
+      }
+
       //read `attrToAssert`
       auto *attrsToAssertList = rec->getValueAsListInit("attrToAssert");
       for (unsigned i = 0, c = attrsToAssertList->size(); i < c; i++) {
