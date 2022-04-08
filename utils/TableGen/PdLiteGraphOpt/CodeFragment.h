@@ -27,6 +27,7 @@ static std::string license = R"(// Copyright (c) 2019 PaddlePaddle Authors. All 
 static std::string singleFileInclude = R"(#include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include "lite/core/optimizer/mir/pattern_matcher_high_api.h"
 #include "lite/core/optimizer/mir/pass_registry.h"
 #include "lite/core/optimizer/mir/pass.h"
@@ -56,7 +57,7 @@ static std::string nameSpaceMirEnd = R"(}  // namespace mir
 )";
 
 static std::string rankChecker = R"(
-bool assertRankEquals(const Node* node, std::string& slotName, unsigned val) {
+bool assertRankEquals(const Node* node, const std::string& slotName, unsigned val) {
   auto op = const_cast<Node*>(node)->stmt()->op();
   auto scope = op->scope();
   auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())
@@ -65,13 +66,26 @@ bool assertRankEquals(const Node* node, std::string& slotName, unsigned val) {
   return rank == val;
 }
 
-bool assertRankInRange(const Node* node, std::string& slotName, unsigned low, unsigned high) {
+bool assertRankInRange(const Node* node, const std::string& slotName, unsigned low, unsigned high) {
   auto op = const_cast<Node*>(node)->stmt()->op();
   auto scope = op->scope();
   auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())
                   ->Get<lite::Tensor>().dims();
   auto rank = dim.size();
   return rank >= low && rank <= high;
+}
+)";
+
+static std::string genUniqueName = R"(
+std::string genUniqueNameInScope(const std::string& rawName, Node* leadingNode) {
+  static std::unordered_map<std::string, int> allocMap;
+  int count = allocMap[rawName]++;
+
+  char buf[20];
+  sprintf(buf, "%16llx", (long long)leadingNode);
+  std::string addrStr(buf + 8);
+
+  return rawName + "_" + to_string(count) + "_" + addrStr;
 }
 )";
 

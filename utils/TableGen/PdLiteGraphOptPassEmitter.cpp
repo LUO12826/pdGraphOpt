@@ -245,10 +245,11 @@ PdLiteGraphOptPassEmitter::dfsSrcPatDag(TDPatternOpNode *dag, TDPattern &pat) {
   for (auto &&cond : nodeCond) {
     if (cond.conditionType == "InputRankAllEquals") {
       auto opVarNames = op->getVarNames();
+      int rankVal = atoi(cond.value1.c_str());
       std::string rankEqStr = EmitInputDimChecker(
                                    opVarNames,
-                                   std::vector<int>(opVarNames.size(), 0),
-                                   std::vector<ComparisonOperator>());
+                                   std::vector<int>(opVarNames.size(), rankVal),
+                                   (std::vector<ComparisonOperator>(opVarNames.size(), ComparisonOperator::Equals)));
       os << llvm::formatv("  {0}->assert_node_satisfied({1});\n", opKey,
                           rankEqStr);
     }
@@ -292,6 +293,14 @@ PdLiteGraphOptPassEmitter::dfsSrcPatDag(TDPatternOpNode *dag, TDPattern &pat) {
               "  {0}->assert_node_satisfied([] (const Node* node) {\n"
               "    return assertRankInRange(node, \"{1}\", {2}, {3});\n  });\n",
               opKey, slotArgNames[i], cond.value1, cond.value2);
+        }
+      }
+
+      if (pat.getCustomTellers().count(argKey)) {
+        auto &tellers = pat.getCustomTellers().at(argKey);
+        for (auto &&tel : tellers) {
+          os << llvm::formatv("  {0}->assert_node_satisfied({1});\n", argKey,
+                              tel.teller);
         }
       }
     }
@@ -488,6 +497,38 @@ std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
   unsigned actualArgSize = targetPatArgNames.size();
   std::stringstream IR_NODE_LINK_TO_code;
 
+  auto genSetComputeResultToInputCode =
+              [&](std::string symbol, unsigned i, std::string copyFrom) {
+    os << llvm::formatv("  std::string {0}_node_name = genUniqueNameInScope(\"{1}\", "
+                        "matched.at(\"{2}\"));\n",
+                            symbol, symbol, op2key[leadingOpNode]);
+    os << llvm::formatv("  auto* {0}_node = graph->NewArgumentNode({1}_node_name);\n",
+                        symbol, symbol);
+    if (targetPatOp->getArgumentTypeAtIndex(i) == TDOpArgument::variable
+        && targetPatOp->getArgumentAsVarAtIndex(i)->getIsWeight()) {
+      os << llvm::formatv("  {0}_node->arg()->is_weight = true;\n",
+                          symbol);
+    }
+    os << llvm::formatv("  {0}_node->arg()->is_persist = true;\n",
+                        symbol);
+    os << llvm::formatv("  {0}_node->arg()->type = LiteType::GetTensorTy(TARGET(kUnk), PRECISION(kFloat), DATALAYOUT(kUnk));\n",
+                        symbol);
+    os << llvm::formatv("  auto* {0}_t = scope->NewTensor({1}_node_name);\n",
+                        symbol, symbol);
+    os << llvm::formatv("  {0}_t->set_precision(paddle::lite_api::PrecisionType::kFloat);\n",
+                        symbol);
+    // innerOpKey + "_val"是嵌套op的计算结果变量符号
+    os << llvm::formatv("  {0}_t->CopyDataFrom({1});\n",
+                        symbol, copyFrom + "_val");
+    os << llvm::formatv(
+        "  {0}_desc_main.SetInput(\"{1}\", {{{2}_node_name});\n",
+        opKey, targetPatArgSlotNames[i], symbol);
+
+    IR_NODE_LINK_TO_code << llvm::formatv(
+                                "  IR_NODE_LINK_TO({0}_node, {1}_op_node);\n",
+                                symbol, opKey).str();
+  };
+
   for (unsigned i = 0; i < targetPatArgs.size(); i++) {
     //检查形参和实参类型是否匹配
     if (!targetPattern->isArgTypeCorrect(i)) {
@@ -511,29 +552,8 @@ std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
     else if (targetPatArgs[i]->getNodeType() == TDPatternNode::Var &&
                refResult) {
       std::string newNodeName = opKey + "_" + targetPatArgSlotNames[i];
-      os << llvm::formatv("  auto* {0}_node = graph->NewArgumentNode(\"{1}\");\n",
-                          newNodeName, newNodeName);
-      if (targetPatOp->getArgumentTypeAtIndex(i) == TDOpArgument::variable
-          && targetPatOp->getArgumentAsVarAtIndex(i)->getIsWeight()) {
-        os << llvm::formatv("  {0}_node->arg()->is_weight = true;\n",
-                            newNodeName);
-      }
-      os << llvm::formatv("  {0}_node->arg()->type = LiteType::GetTensorTy(TARGET(kUnk), PRECISION(kFloat), DATALAYOUT(kUnk));\n",
-                          newNodeName);
-      os << llvm::formatv("  auto* {0}_t = scope->NewTensor(\"{1}\");\n",
-                          newNodeName, newNodeName);
-      os << llvm::formatv("  {0}_t->set_precision(paddle::lite_api::PrecisionType::kFloat);\n",
-                          newNodeName);
 
-      os << llvm::formatv("  {0}_t->CopyDataFrom({1});\n",
-                          newNodeName, argName + "_val");
-      os << llvm::formatv(
-          "  {0}_desc_main.SetInput(\"{1}\", {{\"{2}\"});\n",
-                          opKey, targetPatArgSlotNames[i], newNodeName);
-
-      IR_NODE_LINK_TO_code << llvm::formatv(
-                                  "  IR_NODE_LINK_TO({0}_node, {1}_op_node);\n",
-                                  newNodeName, opKey).str();
+      genSetComputeResultToInputCode(newNodeName, i, argName);
     }
     else if (targetPatArgs[i]->getNodeType() == TDPatternNode::Attr) {
       continue;
@@ -562,34 +582,11 @@ std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
         //        fusion_bias_node->arg()->is_weight = true;
         //        fusion_bias_node->arg()->type = LiteType::GetTensorTy(
         //            TARGET(kHost), PRECISION(kFloat), DATALAYOUT(kNCHW));
-        //
         //        auto* fusion_bias_t = scope->NewTensor(fusion_bias_name);
         //        fusion_bias_t->set_precision(paddle::lite_api::PrecisionType::kFloat);
 
         std::string newNodeName = opKey + "_" + targetPatArgSlotNames[i];
-        os << llvm::formatv("  auto* {0}_node = graph->NewArgumentNode(\"{1}\");\n",
-                            newNodeName, newNodeName);
-        if (targetPatOp->getArgumentTypeAtIndex(i) == TDOpArgument::variable
-            && targetPatOp->getArgumentAsVarAtIndex(i)->getIsWeight()) {
-          os << llvm::formatv("  {0}_node->arg()->is_weight = true;\n",
-                              newNodeName);
-        }
-        os << llvm::formatv("  {0}_node->arg()->type = LiteType::GetTensorTy(TARGET(kUnk), PRECISION(kFloat), DATALAYOUT(kUnk));\n",
-                            newNodeName);
-        os << llvm::formatv("  auto* {0}_t = scope->NewTensor(\"{1}\");\n",
-                            newNodeName, newNodeName);
-        os << llvm::formatv("  {0}_t->set_precision(paddle::lite_api::PrecisionType::kFloat);\n",
-                            newNodeName);
-        // innerOpKey + "_val"是嵌套op的计算结果变量符号
-        os << llvm::formatv("  {0}_t->CopyDataFrom({1});\n",
-                            newNodeName, innerOpKey + "_val");
-        os << llvm::formatv(
-            "  {0}_desc_main.SetInput(\"{1}\", {{\"{2}\"});\n",
-                            opKey, targetPatArgSlotNames[i], newNodeName);
-
-        IR_NODE_LINK_TO_code << llvm::formatv(
-                                    "  IR_NODE_LINK_TO({0}_node, {1}_op_node);\n",
-                                    newNodeName, opKey).str();
+        genSetComputeResultToInputCode(newNodeName, i, innerOpKey);
       }
     }
   }
@@ -1014,6 +1011,8 @@ void PdLiteGraphOptPassEmitter::run(raw_ostream &OS) {
   OS << directElementWiseCompute;
   OS << "\n";
   OS << rankChecker;
+  OS << "\n";
+  OS << genUniqueName;
   OS << "\n";
   OS << nameSpaceFusionEnd;
 
