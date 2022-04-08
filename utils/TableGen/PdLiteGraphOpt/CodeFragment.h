@@ -56,7 +56,7 @@ static std::string nameSpaceMirEnd = R"(}  // namespace mir
 )";
 
 static std::string rankChecker = R"(
-bool assertRankEquals(const Node* node, std::string slotName, unsigned val) {
+bool assertRankEquals(const Node* node, std::string& slotName, unsigned val) {
   auto op = const_cast<Node*>(node)->stmt()->op();
   auto scope = op->scope();
   auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())
@@ -65,7 +65,7 @@ bool assertRankEquals(const Node* node, std::string slotName, unsigned val) {
   return rank == val;
 }
 
-bool assertRankInRange(const Node* node, std::string slotName, unsigned low, unsigned high) {
+bool assertRankInRange(const Node* node, std::string& slotName, unsigned low, unsigned high) {
   auto op = const_cast<Node*>(node)->stmt()->op();
   auto scope = op->scope();
   auto &dim = scope->FindVar(op->op_info()->Input(slotName).front())

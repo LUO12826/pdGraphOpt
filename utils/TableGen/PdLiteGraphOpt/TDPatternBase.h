@@ -234,6 +234,7 @@ public:
     }
     if (op->getArgumentTypeAtIndex(index) == TDOpArgument::attribute) {
       if (arguments[index]->getNodeType() == Attr) return true;
+      if (arguments[index]->getNodeType() == Op) return true;
       return false;
     }
     return false;

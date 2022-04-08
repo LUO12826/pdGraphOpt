@@ -109,10 +109,6 @@ public:
     return t;
   }
 
-  std::string getName() {
-    return name;
-  }
-
   std::string getValue() {
     return value;
   }
