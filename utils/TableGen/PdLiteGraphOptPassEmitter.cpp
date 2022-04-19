@@ -140,7 +140,7 @@ std::string PdLiteGraphOptPassEmitter::getNewOpKey(std::string opType) {
 void PdLiteGraphOptPassEmitter::EmitBuildPatternMethod(TDPattern &pat) {
   auto *srcPatRoot = pat.getSourcePatternRoot();
 
-  os << "void " << pat.getNameWithoutPat() << "Fuser::BuildPattern() {\n";
+  os << "void " << pat.getNameWithoutPat() << "FuserGen::BuildPattern() {\n";
 
   std::string innerOpKey = dfsSrcPatDag(srcPatRoot, pat);
 
@@ -361,7 +361,7 @@ void PdLiteGraphOptPassEmitter::EmitBuildNewGraphMethod(TDPattern &pat) {
   auto targetPat = pat.getTargetPatternRoot();
 
   os << "void " << pat.getNameWithoutPat()
-     << "Fuser::InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) {\n\n";
+     << "FuserGen::InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) {\n\n";
 
   os << llvm::formatv("  auto* scope = matched.at(\"{0}\")->stmt()->op()->scope();\n",
                       leadingOpKey);
@@ -900,7 +900,7 @@ void PdLiteGraphOptPassEmitter::EmitFuserHeader(TDPattern &pat) {
 
   std::string patName = pat.getNameWithoutPat();
   const auto &variableOpTypes = pat.getVariableOpTypes();
-  os << "class " << patName << "Fuser"
+  os << "class " << patName << "FuserGen"
      << " : public FuseBase {\n";
   os << "public:\n";
 
@@ -908,7 +908,7 @@ void PdLiteGraphOptPassEmitter::EmitFuserHeader(TDPattern &pat) {
   // explicit MatchMatrixActFuser(std::string activation)
   //             : activation_(activation) {}
   if (variableOpTypes.size() > 0) {
-    os << "  explicit " << patName << "Fuser(";
+    os << "  explicit " << patName << "FuserGen(";
     bool first = true;
     std::stringstream assignStr;
     for (auto &item : variableOpTypes) {
@@ -948,7 +948,7 @@ void PdLiteGraphOptPassEmitter::EmitFuserImpl(TDPattern &pat) {
 
 void PdLiteGraphOptPassEmitter::EmitPassHeader(TDPattern &pat) {
 
-  os << llvm::formatv("class {0}FusePass : public ProgramPass {{\n",
+  os << llvm::formatv("class {0}FusePassGen : public ProgramPass {{\n",
                       pat.getNameWithoutPat());
   os << R"(public:
   void Apply(const std::unique_ptr<SSAGraph>& graph) override;
@@ -959,10 +959,10 @@ void PdLiteGraphOptPassEmitter::EmitPassHeader(TDPattern &pat) {
 
 void PdLiteGraphOptPassEmitter::EmitPassImpl(TDPattern &pat) {
 
-  os << llvm::formatv("void {0}FusePass::Apply(\n",
+  os << llvm::formatv("void {0}FusePassGen::Apply(\n",
                       pat.getNameWithoutPat());
   os << "    const std::unique_ptr<SSAGraph>& graph) {\n";
-  os << llvm::formatv("  fusion::{0}Fuser fuser;\n",
+  os << llvm::formatv("  fusion::{0}FuserGen fuser;\n",
                       pat.getNameWithoutPat());
   os << "  fuser(graph.get());\n";
   os << "}\n";
@@ -974,7 +974,7 @@ void PdLiteGraphOptPassEmitter::EmitRegisterPass(TDPattern &pat) {
      << convertCamelToSnake(pat.getNameWithoutPat() + "FusePass")
      << ",\n";
   os << "                  paddle::lite::mir::"
-     << pat.getNameWithoutPat() << "FusePass" << ")\n";
+     << pat.getNameWithoutPat() << "FusePassGen" << ")\n";
   for (auto &target : pat.getBindTargets()) {
     os << llvm::formatv("    .BindTargets({{TARGET({0})})\n",
                         target);
