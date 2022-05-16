@@ -195,7 +195,7 @@ def Reshape2MatmulPat: Pat<
     size_t reshape2_in_x_rank = reshape2_in_x_shape.size();
 
     auto shapeAssert = reshape2_op_desc.HasAttr("shape")
-                       && reshape2_op_desc.GetAttr<std::vector<int>>("shape").size() == 2;
+            && reshape2_op_desc.GetAttr<std::vector<int>>("shape").size() == 2;
 
     return (reshape2_in_x_rank == 4 && reshape2_in_x_shape[2] == 1 &&
             reshape2_in_x_shape[3] == 1 && shapeAssert);
@@ -240,3 +240,73 @@ def Squeeze2MatmulPat: Pat<
   let bindTargets = ["kAny"];
 }
 
+
+// // var_conv_2d
+// def VarConv2dPat: Pat<
+//         (ReluOp<> (VarConv2dOp<"oldConv"> $X, $ROW, $COLUMN, $W)),
+
+//         (VarConv2dOp<"newConv"> $X, $ROW, $COLUMN, $W, OpAttr<BOOL, "true">)> {
+
+//   let extraAssertions = [
+//     RetainOp<"oldConv", "newConv">
+//   ];
+
+//   let bindTargets = ["kCUDA"];
+// }
+
+
+// // Elementwise_mul + Scale
+// def ElewiseMulScalePat: Pat<
+//         (ScaleOp<> (ElementwiseOp<"elementwise_mul"> $x, $y),
+//           $act_type, $scale, $bias, $alpha),
+
+//         (ElementwiseOp<"elementwise_mul"> $x, $y,
+//           $act_type, OpAttr<BOOL, "true">, $scale, $alpha, $bias)> {
+
+//   let bindTargets = ["kOpenCL"];
+// }
+
+
+// // Scale + Activation
+// let extraAssertions = [ RetainOp<"old", "new"> ],
+//   kernelName = "scale",
+//   bindTargets = ["kARM"],
+//   excludeTargets = ["kNPU", "kXPU", "kRKNPU", "kAPU",
+//                         "kHuaweiAscendNPU", "kNNAdapter"] in {
+
+//   def ScaleReluPat: Pat<
+//           (ReluOp<> (ScaleOp<"old"> $x)),
+//           (ScaleOp<"new"> $x, OpAttr<STRING, "relu">,
+//               $_, $_, $_, $_, OpAttr<BOOL, "true">)>;
+
+//   def ScaleRelu6Pat: Pat<
+//           (Relu6Op<> (ScaleOp<"old"> $x), $alpha),
+//           (ScaleOp<"new"> $x, OpAttr<STRING, "relu6">,
+//               $_, $_, $alpha)>;
+
+//   def ScaleLeakyreluPat: Pat<
+//           (LeakyreluOp<> (ScaleOp<"old"> $x), $alpha),
+//           (ScaleOp<"new"> $x, OpAttr<STRING, "leaky_relu">,
+//               $_, $_, $alpha)>;
+// }
+
+// // sequence reverse embedding
+// def SeqReverseEmbeddingPat: Pat<
+//       (LookupTableOp<"old"> $w, (SequenceReverseOp<> $x)),
+//       (SequenceReverseEmbeddingOp<"new"> $w, $x)> {
+  
+//   let extraAssertions = [
+//     RetainOp<"old", "new">
+//   ];
+
+//   let bindTargets = ["kCUDA"];
+// }
+
+// // greaterThan + Cast
+// def GreaterThanCastPat: Pat<
+//       (CastOp<> (CompareOp<"greater_than"> $x, $y)),
+//       (CompareOp<"greater_than"> $x, $y, $_, OpAttr<BOOL, "true">)> {
+
+//   let bindTargets = ["kOpenCL"];
+//   let kernelName = "greater_than";
+// }

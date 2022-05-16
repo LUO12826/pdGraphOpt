@@ -81,6 +81,26 @@ class BatchNormOp<string key = "">: Op<"batch_norm", key> {
 class ScaleOp<string key = ""> : Op<"scale", key> {
   let arguments = (ins
     tVar:$X,
+    DefaultAttr<STRING, "">:$activation_type,
+    DefaultAttr<FLOAT, "1.0">:$scale,
+    DefaultAttr<FLOAT, "0.0">:$bias,
+    DefaultAttr<FLOAT, "6.0">:$alpha,
+    DefaultAttr<BOOL, "true">:$bias_after_scale,
+    DefaultAttr<BOOL, "false">:$fuse_relu,
+    DefaultAttr<BOOL, "false">:$fuse_scaleact,
+    DefaultAttr<FLOAT, "1.0">:$scale1,
+    DefaultAttr<FLOAT, "0.0">:$bias1
+  );
+
+  let results = (outs tVar:$Out);
+}
+
+
+class FlattenContiguousRangeOp<string key = ""> :
+                            Op<"flatten_contiguous_range", key> {
+
+  let arguments = (ins
+    tVar:$X,
     DefaultAttr<INT, "1">:$start_axis,
     DefaultAttr<INT, "1">:$stop_axis
   );
@@ -89,19 +109,37 @@ class ScaleOp<string key = ""> : Op<"scale", key> {
 }
 
 
-class FlattenContiguousRangeOp<string key = ""> :
-                            Op<"flatten_contiguous_range", key> {
+class SequenceReverseOp<string key = ""> : Op<"sequence_reverse", key> {
+
+  let arguments = (ins tVar:$X);
+
+  let results = (outs tVar:$Y);
+}
+
+
+class SequenceReverseEmbeddingOp<string key = "">
+                            : Op<"sequence_reverse_embedding", key> {
   let arguments = (ins
-    tVar:$X,
-    DefaultAttr<FLOAT, "1.0">:$scale,
-    DefaultAttr<FLOAT, "0.0">:$bias,
-    DefaultAttr<FLOAT, "6.0">:$alpha,
-    DefaultAttr<BOOL, "true">:$bias_after_scale,
-    DefaultAttr<BOOL, "false">:$fuse_relu,
-    DefaultAttr<STRING, "">:$activation_type,
-    DefaultAttr<BOOL, "false">:$fuse_scaleact,
-    DefaultAttr<FLOAT, "1.0">:$scale1,
-    DefaultAttr<FLOAT, "0.0">:$bias1
+      tVar:$W,
+      tVar:$Ids,
+      DefaultAttr<INT, "-1">:$padding_idx,
+      DefaultAttr<BOOL, "true">:$is_test,
+      DefaultAttr<STRING, "">:$entry_config,
+      DefaultAttr<STRING, "none">:$entry
+  );
+
+  let results = (outs tVar:$Out);
+}
+
+
+class LookupTableOp<string key = ""> : Op<"lookup_table", key> {
+  let arguments = (ins
+      tVar:$W,
+      tVar:$Ids,
+      DefaultAttr<INT, "-1">:$padding_idx,
+      DefaultAttr<BOOL, "true">:$is_test,
+      DefaultAttr<STRING, "">:$entry_config,
+      DefaultAttr<STRING, "none">:$entry
   );
 
   let results = (outs tVar:$Out);
@@ -143,10 +181,34 @@ class SoftmaxOp<string key = "">: Op<"softmax", key> {
 class Squeeze2Op<string key = "">: Op<"squeeze2", key> {
   let arguments = (ins
     tVar:$X,
-    tVar:$X,
+    DefaultAttr<INTs, "{}">:$axes,
     DefaultAttr<BOOL, "false">:$inplace
   );
   let results = (outs tVar:$Out, tVar:$XShape);
+}
+
+
+class CompareOp<string typ, string key = "">: Op<typ, key> {
+  let arguments = (ins 
+    tVar:$X,
+    tVar:$Y,
+    DefaultAttr<BOOL, "false">:$force_cpu,
+    DefaultAttr<BOOL, "false">:$fuse_greater_than,
+    DefaultAttr<INT, "-1">:$axis
+  );
+
+  let results = (outs tVar:$Out);
+}
+
+
+class CastOp<string key = "">: Op<"cast", key> {
+    let arguments = (ins 
+    tVar:$X,
+    DefaultAttr<INT, "2">:$out_dtype,
+    DefaultAttr<INT, "2">:$in_dtype
+  );
+
+  let results = (outs tVar:$Out);
 }
 
 
@@ -166,6 +228,18 @@ class Conv2dOp<string key = ""> : Op<"conv2d", key> {
 
   let arguments = (ins tVar:$Input, tVar:$Filter, tVar:$Bias);
   let results = (outs tVar:$Output);
+}
+
+class VarConv2dOp<string key = ""> :Op<"var_conv_2d", key> {
+  let arguments = (ins
+    tVar:$X,
+    tVar:$ROW,
+    tVar:$COLUMN,
+    tVar:$W,
+    DefaultAttr<BOOL, "false">:$fuse_relu
+  );
+
+  let results = (outs tVar:$Out, tVar:$Col);
 }
 
 
@@ -198,6 +272,12 @@ class ElementwiseOp<string typ, string key = ""> : Op<typ, key> {
   let arguments = (ins
     tVar:$X,
     tVar:$Y,
+    DefaultAttr<STRING, "relu">:$activation_type,
+    DefaultAttr<BOOL, "false">:$fuse_scale,
+    DefaultAttr<FLOAT, "1.0">:$scale,
+    DefaultAttr<FLOAT, "6.0">:$alpha,
+    DefaultAttr<FLOAT, "0.0">:$bias,
+    DefaultAttr<BOOL, "false">:$bias_after_scale,
     DefaultAttr<INT, "-1">:$axis
   );
 
@@ -232,19 +312,31 @@ class FcOp<string key = ""> : Op<"fc", key> {
 
 class ActivationVarOp<string key = "">: Op<"activation_", key> {
   let typeIsVariable = true;
-  let arguments = (ins tVar:$Input);
+  let arguments = (ins tVar:$X);
   let results = (outs tVar:$Out);
 }
 
 
 class GenericActivationOp<string typ, string key = "">: Op<typ, key> {
-  let arguments = (ins tVar:$Input);
+  let arguments = (ins tVar:$X);
   let results = (outs tVar:$Out);
 }
 
 
 class ReluOp<string key = "">: Op<"relu", key> {
-  let arguments = (ins tVar:$Input);
+  let arguments = (ins tVar:$X);
+  let results = (outs tVar:$Out);
+}
+
+
+class Relu6Op<string key = "">: Op<"relu6", key> {
+  let arguments = (ins tVar:$X, DefaultAttr<FLOAT, "6.0">:$threshold);
+  let results = (outs tVar:$Out);
+}
+
+
+class LeakyreluOp<string key = "">: Op<"leaky_relu", key> {
+  let arguments = (ins tVar:$X, DefaultAttr<FLOAT, "0.0">:$alpha);
   let results = (outs tVar:$Out);
 }
 

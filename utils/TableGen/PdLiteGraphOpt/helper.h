@@ -70,13 +70,14 @@ std::string convertCamelToSnake(std::string camel) {
 }
 
 void genAttrAssertCode(const AttrToAssert& attr, std::string opKey, llvm::raw_ostream &os) {
+  std::string dType = attr.dataType == "string" ? "std::string" : attr.dataType;
   if (attr.useCustomAssert) {
     os << llvm::formatv(
         "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", {3});\n", opKey,
-        attr.dataType, attr.attrName, attr.customAssert);
+        dType, attr.attrName, attr.customAssert);
   }
   //对于浮点数，考虑误差
-  else if (attr.dataType == "float" || attr.dataType == "double") {
+  else if (dType == "float" || dType == "double") {
     os << llvm::formatv(
         "  {0}->assert_op_attr_satisfied<{1}>(\"{2}\", "
         "[]({3} attr) { return (std::fabs(attr - {4}) < 1e-5); });\n",
@@ -84,9 +85,9 @@ void genAttrAssertCode(const AttrToAssert& attr, std::string opKey, llvm::raw_os
   }
   else {
     os << llvm::formatv(
-        "  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey, attr.dataType,
+        "  {0}->assert_op_attr<{1}>(\"{2}\", {3});\n", opKey, dType,
         attr.attrName,
-        attr.dataType != "string" ? attr.value : "\"" + attr.value + "\"");
+        attr.dataType != "std::string" ? attr.value : "\"" + attr.value + "\"");
   }
 }
 

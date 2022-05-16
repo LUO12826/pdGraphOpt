@@ -157,7 +157,7 @@ void PdLiteGraphOptPassEmitter::EmitBuildPatternMethod(TDPattern &pat) {
         "  auto* {0} = VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\")",
         srcPatOutputNames[i], srcPatOutputNames[i], innerOpType,
         srcPatRoot->getOp()->getResNames()[i]);
-    if (!first) {
+    if (!first && !pat.isOpRetained(srcPatRoot->getOp()->getKey())) {
       os << "->AsIntermediate()";
     } else {
       first = false;
@@ -326,7 +326,9 @@ PdLiteGraphOptPassEmitter::dfsSrcPatDag(TDPatternOpNode *dag, TDPattern &pat) {
             "  auto* {0} = "
             "VarNode(\"{1}\")->assert_is_op_output({2}, \"{3}\");\n",
             innerOpOutKey, innerOpOutKey, innerOpType, innerOpResNames[j]);
-        os << "  " << innerOpOutKey << "->AsIntermediate();\n";
+        if (j == 0 || !pat.isOpRetained(opArgPtr->getOp()->getKey())) {
+          os << "  " << innerOpOutKey << "->AsIntermediate();\n";
+        }
 
         if (j == 0)
           inputs.push_back(innerOpOutKey);
@@ -592,10 +594,21 @@ std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
   }
 
   for (unsigned i = 0, c = targetPatOp->getResNames().size(); i < c; i++) {
+    std::string outName = srcPatOutputNames[i];
+    if (outName == "") {
+      if (retainKey != "") {
+        std::string thatOpKey = opDesignatedKey2opKey[retainKey];
+        outName = thatOpKey + "_" + targetPatOp->getResNames()[i];
+      }
+      else {
+        llvm::dbgs() << pat.getName()
+                     << "'s InsertNewNode Method has wrong `SetOutput";
+      }
+    }
     os << llvm::formatv(
         "  {0}_desc_main.SetOutput(\"{1}\", {matched.at(\"{2}\")->arg()->name});\n",
                         opKey,
-        targetPatOp->getResNames()[i], srcPatOutputNames[i]);
+        targetPatOp->getResNames()[i], outName);
   }
 
 
@@ -634,7 +647,8 @@ std::string PdLiteGraphOptPassEmitter::dfsResPatDag(
         std::string thatAttrName
             = thatOp->getArgSlotNameByActualArgName(actualArgName);
         std::string thisAttrName = attr.attrName;
-        std::string dataType = attr.dataType;
+        std::string dataType = attr.dataType == "string" ?
+            "std::string" : attr.dataType;
 
         os << llvm::formatv(
             "  if (matched.at(\"{0}\")->stmt()->op_info()->HasAttr(\"{1}\")) {{\n",
