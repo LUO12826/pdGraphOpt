@@ -241,6 +241,33 @@ def Squeeze2MatmulPat: Pat<
 }
 
 
+// Scale + Activation
+let extraAssertions = [ RetainOp<"old", "new"> ],
+  kernelName = "scale",
+  bindTargets = ["kARM"],
+  excludeTargets = ["kNPU", "kXPU", "kRKNPU", "kAPU",
+                        "kHuaweiAscendNPU", "kNNAdapter"] in {
+
+  def ScaleReluPat: Pat<
+          (ReluOp<> (ScaleOp<"old"> $x)),
+          (ScaleOp<"new"> $x, OpAttr<STRING, "relu">,
+              $_, $_, $_, $_, OpAttr<BOOL, "true">)>;
+
+  def ScaleRelu6Pat: Pat<
+          (Relu6Op<> (ScaleOp<"old"> $x), $alpha),
+          (ScaleOp<"new"> $x, OpAttr<STRING, "relu6">,
+              $_, $_, $alpha)>;
+
+  def ScaleLeakyreluPat: Pat<
+          (LeakyreluOp<> (ScaleOp<"old"> $x), $alpha),
+          (ScaleOp<"new"> $x, OpAttr<STRING, "leaky_relu">,
+              $_, $_, $alpha)>;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// 以下生成的C++代码能通过编译，但正确性未经过实际验证。
+
 // // var_conv_2d
 // def VarConv2dPat: Pat<
 //         (ReluOp<> (VarConv2dOp<"oldConv"> $X, $ROW, $COLUMN, $W)),
@@ -266,29 +293,6 @@ def Squeeze2MatmulPat: Pat<
 //   let bindTargets = ["kOpenCL"];
 // }
 
-
-// // Scale + Activation
-// let extraAssertions = [ RetainOp<"old", "new"> ],
-//   kernelName = "scale",
-//   bindTargets = ["kARM"],
-//   excludeTargets = ["kNPU", "kXPU", "kRKNPU", "kAPU",
-//                         "kHuaweiAscendNPU", "kNNAdapter"] in {
-
-//   def ScaleReluPat: Pat<
-//           (ReluOp<> (ScaleOp<"old"> $x)),
-//           (ScaleOp<"new"> $x, OpAttr<STRING, "relu">,
-//               $_, $_, $_, $_, OpAttr<BOOL, "true">)>;
-
-//   def ScaleRelu6Pat: Pat<
-//           (Relu6Op<> (ScaleOp<"old"> $x), $alpha),
-//           (ScaleOp<"new"> $x, OpAttr<STRING, "relu6">,
-//               $_, $_, $alpha)>;
-
-//   def ScaleLeakyreluPat: Pat<
-//           (LeakyreluOp<> (ScaleOp<"old"> $x), $alpha),
-//           (ScaleOp<"new"> $x, OpAttr<STRING, "leaky_relu">,
-//               $_, $_, $alpha)>;
-// }
 
 // // sequence reverse embedding
 // def SeqReverseEmbeddingPat: Pat<
