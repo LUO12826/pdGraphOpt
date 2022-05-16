@@ -1038,11 +1038,7 @@ add_subdirectory(include/llvm)
 add_subdirectory(lib)
 
 if( LLVM_INCLUDE_UTILS )
-  add_subdirectory(utils/FileCheck)
-  add_subdirectory(utils/PerfectShuffle)
-  add_subdirectory(utils/count)
-  add_subdirectory(utils/not)
-  add_subdirectory(utils/yaml-bench)
+
 else()
   if ( LLVM_INCLUDE_TESTS )
     message(FATAL_ERROR "Including tests when not building utils will not work.
@@ -1061,19 +1057,19 @@ foreach( binding ${LLVM_BINDINGS_LIST} )
   endif()
 endforeach()
 
-add_subdirectory(projects)
+#add_subdirectory(projects)
 
-if( LLVM_INCLUDE_TOOLS )
-  add_subdirectory(tools)
-endif()
+#if( LLVM_INCLUDE_TOOLS )
+#  add_subdirectory(tools)
+#endif()
 
-if( LLVM_INCLUDE_RUNTIMES )
-  #add_subdirectory(runtimes)
-endif()
+#if( LLVM_INCLUDE_RUNTIMES )
+#  add_subdirectory(runtimes)
+#endif()
 
-if( LLVM_INCLUDE_EXAMPLES )
-  add_subdirectory(examples)
-endif()
+#if( LLVM_INCLUDE_EXAMPLES )
+#  add_subdirectory(examples)
+#endif()
 
 if( LLVM_INCLUDE_TESTS )
   if(EXISTS ${LLVM_MAIN_SRC_DIR}/projects/test-suite AND TARGET clang)
@@ -1129,9 +1125,9 @@ endif()
 add_subdirectory(cmake/modules)
 
 # Do this last so that all lit targets have already been created.
-if (LLVM_INCLUDE_UTILS)
-  add_subdirectory(utils/llvm-lit)
-endif()
+#if (LLVM_INCLUDE_UTILS)
+#  add_subdirectory(utils/llvm-lit)
+#endif()
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   install(DIRECTORY include/llvm include/llvm-c
