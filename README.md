@@ -109,7 +109,7 @@ git checkout release/v2.10
 
 ##### 3.删除Paddle Lite框架中原有的、功能相同的计算图优化pass。
 
-这是对Paddle Lite中的pass进行调整，可参考https://www.paddlepaddle.org.cn/lite/v2.10/develop_guides/add_new_pass.html。
+这是对Paddle Lite中的pass进行调整，可参考https://www.paddlepaddle.org.cn/lite/v2.10/develop_guides/add_new_pass.html。(无需查看也可以进行下面的步骤)
 
 这里我们通过注释的方式使之不发挥作用。以fc fuse pass为例：
 
