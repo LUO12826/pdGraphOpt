@@ -3,19 +3,19 @@
 ### 基本说明
 该编译器由llvm TableGen工具修改而来。TableGen工具本身也是一个前后端分离的编译器。其代码主要存放在/lib/TableGen（通用的代码，主要是前端部分）和/utils/TableGen(各个后端的代码)中。其中，/utils/TableGen/TableGen.cpp为TableGen程序入口。
 
-我们对TableGen的修改主要在后端部分，**因此增加的代码均在/utils/TableGen下。**其中：
+我们对TableGen的修改主要在后端部分，因此**增加的代码均在/utils/TableGen下**。其中：
 
-**/utils/TableGen/PdLiteGraphOptPassEmitter.cpp**为生成Paddle Lite图优化代码的后端。
+- /utils/TableGen/PdLiteGraphOptPassEmitter.cpp为生成Paddle Lite图优化代码的后端。
 
-**/utils/TableGen/PdLiteGraphOpt/**为辅助代码。
+- /utils/TableGen/PdLiteGraphOpt/为辅助代码。
 
-其余文件则与原版LLVM TableGen**保持一致**。
+其余文件则与原版LLVM TableGen保持一致。
 
-*2022.06.21更新说明：为简洁起见，**已删除LLVM TableGen其它后端**。*
+*2022.06.21更新说明：为简洁起见，已删除LLVM TableGen其它后端。*
 
 
 
-**预先编写好的DSL代码**，也即图变换规则的td语言描述，存放于/paddle-lite-def下。
+**预先编写好的DSL代码**，也即图变换规则的td语言描述，作为编译器的输入，存放于/paddle-lite-def下。
 
 其中，FusePattern.td描述了Paddle Lite中的部分子图融合模式，Op.td描述了部分算子。其它两个文件提供了一些基础设施。
 
